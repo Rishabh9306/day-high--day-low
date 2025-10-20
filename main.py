@@ -71,8 +71,14 @@ class TradingBot:
         
         if self.trade_manager.current_position:
             print(f"📍 Position: {self.trade_manager.current_position} @ {self.trade_manager.strike}")
-            print(f"   Entry: {self.trade_manager.entry_price:.2f}")
-            print(f"   SL: {self.trade_manager.stop_loss:.2f} | Target: {self.trade_manager.target:.2f}")
+            print(f"   Entry: ₹{self.trade_manager.entry_price:.2f}")
+            
+            if self.trade_manager.trailing_sl_active:
+                print(f"   🎯 Trailing SL Active!")
+                print(f"   High Water Mark: ₹{self.trade_manager.high_water_mark:.2f}")
+                print(f"   Trailing SL: ₹{self.trade_manager.trailing_stop_loss:.2f} | Target: ₹{self.trade_manager.target:.2f}")
+            else:
+                print(f"   SL: ₹{self.trade_manager.stop_loss:.2f} | Target: ₹{self.trade_manager.target:.2f}")
         else:
             print(f"📍 Position: None")
         

@@ -18,8 +18,13 @@ INDEX_SYMBOL = "NIFTY 50"
 OPTIONS_SYMBOL = "NIFTY"
 
 # Entry/Exit Parameters
-STOP_LOSS_PERCENT = 10  # 10% from entry
+STOP_LOSS_PERCENT = 10  # 10% from entry (initial fixed SL)
 TARGET_PERCENT = 20     # 20% from entry
+
+# Trailing Stop Loss Parameters
+TRAILING_SL_ENABLED = True  # Enable trailing stop loss feature
+TRAILING_ACTIVATION_PERCENT = 20  # Activate trailing SL after 20% profit
+TRAILING_SL_PERCENT = 10  # Trail by 10% from High Water Mark
 
 # Trading Configuration
 CAPITAL_PER_TRADE = int(os.getenv('CAPITAL_PER_TRADE', 50000))

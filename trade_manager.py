@@ -28,6 +28,11 @@ class TradeManager:
         self.quantity = None
         self.trades_today = 0
         
+        # Trailing Stop Loss state
+        self.trailing_sl_active = False
+        self.high_water_mark = None  # Highest price reached after activation
+        self.trailing_stop_loss = None  # Dynamic trailing SL
+        
         # Flags
         self.high_breakout_triggered = False
         self.low_breakout_triggered = False
@@ -58,6 +63,12 @@ class TradeManager:
                         self.trades_today = state.get('trades_today', 0)
                         self.high_breakout_triggered = state.get('high_breakout_triggered', False)
                         self.low_breakout_triggered = state.get('low_breakout_triggered', False)
+                        
+                        # Load trailing SL state
+                        self.trailing_sl_active = state.get('trailing_sl_active', False)
+                        self.high_water_mark = state.get('high_water_mark')
+                        self.trailing_stop_loss = state.get('trailing_stop_loss')
+                        
                         print("Loaded existing trade state")
         except Exception as e:
             print(f"Error loading state: {e}")
@@ -79,6 +90,9 @@ class TradeManager:
                 'trades_today': self.trades_today,
                 'high_breakout_triggered': self.high_breakout_triggered,
                 'low_breakout_triggered': self.low_breakout_triggered,
+                'trailing_sl_active': self.trailing_sl_active,
+                'high_water_mark': self.high_water_mark,
+                'trailing_stop_loss': self.trailing_stop_loss,
             }
             
             with open('trade_state.json', 'w') as f:
@@ -183,6 +197,11 @@ class TradeManager:
             self.target = option_price * (1 + config.TARGET_PERCENT / 100)
             self.trades_today += 1
             
+            # Initialize trailing SL state
+            self.trailing_sl_active = False
+            self.high_water_mark = None
+            self.trailing_stop_loss = None
+            
             if option_type == "CE":
                 self.high_breakout_triggered = True
             else:
@@ -191,6 +210,8 @@ class TradeManager:
             print(f"Entry Price: {self.entry_price}")
             print(f"Stop Loss: {self.stop_loss:.2f} (-{config.STOP_LOSS_PERCENT}%)")
             print(f"Target: {self.target:.2f} (+{config.TARGET_PERCENT}%)")
+            if config.TRAILING_SL_ENABLED:
+                print(f"Trailing SL: Will activate at +{config.TRAILING_ACTIVATION_PERCENT}% profit")
             print(f"Order ID: {self.order_id}")
             
             self.save_state()
@@ -248,11 +269,17 @@ class TradeManager:
         self.strike = None
         self.quantity = None
         
+        # Reset trailing SL state
+        self.trailing_sl_active = False
+        self.high_water_mark = None
+        self.trailing_stop_loss = None
+        
         self.save_state()
     
     def check_exit_conditions(self):
         """
         Check if exit conditions are met for current position
+        Implements trailing stop-loss based on feature:trailing_sl.md specification
         """
         if not self.current_position:
             return
@@ -264,7 +291,60 @@ class TradeManager:
         if not current_price:
             return
         
-        # Check stop loss
+        # Calculate current profit percentage
+        profit_percent = ((current_price - self.entry_price) / self.entry_price) * 100
+        
+        # === TRAILING STOP LOSS LOGIC ===
+        if config.TRAILING_SL_ENABLED:
+            # Phase 2: Activation Check
+            if not self.trailing_sl_active and profit_percent >= config.TRAILING_ACTIVATION_PERCENT:
+                # Activate trailing stop loss
+                self.trailing_sl_active = True
+                self.high_water_mark = current_price
+                self.trailing_stop_loss = self.high_water_mark * (1 - config.TRAILING_SL_PERCENT / 100)
+                
+                print(f"\n{'='*60}")
+                print(f"🎯 TRAILING STOP-LOSS ACTIVATED!")
+                print(f"{'='*60}")
+                print(f"Current Price: ₹{current_price:.2f}")
+                print(f"Profit: {profit_percent:.2f}% (Threshold: {config.TRAILING_ACTIVATION_PERCENT}%)")
+                print(f"High Water Mark: ₹{self.high_water_mark:.2f}")
+                print(f"Trailing SL: ₹{self.trailing_stop_loss:.2f} (-{config.TRAILING_SL_PERCENT}% from HWM)")
+                print(f"{'='*60}\n")
+                
+                self.save_state()
+            
+            # Phase 3: Trailing and Exit Logic
+            if self.trailing_sl_active:
+                # Check for new high
+                if current_price > self.high_water_mark:
+                    # Update High Water Mark and recalculate trailing SL
+                    old_hwm = self.high_water_mark
+                    old_tsl = self.trailing_stop_loss
+                    
+                    self.high_water_mark = current_price
+                    self.trailing_stop_loss = self.high_water_mark * (1 - config.TRAILING_SL_PERCENT / 100)
+                    
+                    print(f"📈 New High! HWM: ₹{old_hwm:.2f} → ₹{self.high_water_mark:.2f} | "
+                          f"TSL: ₹{old_tsl:.2f} → ₹{self.trailing_stop_loss:.2f}")
+                    
+                    self.save_state()
+                
+                # Check trailing stop loss hit
+                if current_price <= self.trailing_stop_loss:
+                    drawdown_from_peak = ((self.high_water_mark - current_price) / self.high_water_mark) * 100
+                    print(f"\n🛑 Trailing Stop-Loss Hit!")
+                    print(f"Price dropped {drawdown_from_peak:.2f}% from peak (₹{self.high_water_mark:.2f})")
+                    self.exit_trade("TRAILING_STOP_LOSS", current_price)
+                    return
+                
+                # No other exits when trailing SL is active (target is ignored)
+                return
+        
+        # === STANDARD EXIT CONDITIONS (when trailing SL not active) ===
+        # Phase 1: Initial Risk Management
+        
+        # Check initial stop loss
         if current_price <= self.stop_loss:
             self.exit_trade("STOP_LOSS", current_price)
             return
