@@ -11,9 +11,22 @@ An automated intraday trading system that trades Nifty 50 options based on previ
 - **Buy PE (Put Option)**: When current price crosses **below** yesterday's low
 
 ### Exit Conditions
-- **Stop Loss**: 20% from entry price
-- **Target**: 40% from entry price
+- **Stop Loss**: Dynamic (VIX-based) or Fixed percentage
+- **Target**: Dynamic (VIX-based) or Fixed percentage
 - **EOD Square Off**: All positions squared off at 3:15 PM
+
+#### Risk Management Modes
+
+**VIX-Based (Default):**
+- Stop Loss = India VIX × 1.0 (e.g., VIX 11.3% → SL 11.3%)
+- Target = India VIX × 3.0 (e.g., VIX 11.3% → Target 33.9%)
+- Automatically adapts to market volatility
+- See [VIX_TRADING.md](VIX_TRADING.md) for details
+
+**Fixed Percentages:**
+- Stop Loss: 10% from entry
+- Target: 20% from entry
+- Set `USE_VIX_BASED_TARGETS = False` in `config.py`
 
 ### Key Features
 - ✅ Intraday trading only (MIS)

@@ -87,7 +87,17 @@ class TradingBot:
         print("🚀 NIFTY 50 BREAKOUT TRADING BOT")
         print("="*70)
         print(f"Strategy: Day High/Low Breakout")
-        print(f"Stop Loss: {config.STOP_LOSS_PERCENT}% | Target: {config.TARGET_PERCENT}%")
+        
+        if config.USE_VIX_BASED_TARGETS:
+            vix = self.trade_manager.data_fetcher.get_india_vix()
+            if vix:
+                print(f"Risk Model: VIX-Based (India VIX: {vix}%)")
+                print(f"Stop Loss: {int(vix * config.VIX_SL_MULTIPLIER)}% | Target: {int(vix * config.VIX_TARGET_MULTIPLIER)}%")
+            else:
+                print(f"Risk Model: VIX-Based (VIX fetch pending...)")
+        else:
+            print(f"Risk Model: Fixed Percentages")
+            print(f"Stop Loss: {config.STOP_LOSS_PERCENT}% | Target: {config.TARGET_PERCENT}%")
         print(f"Trading Hours: {config.TRADING_START_HOUR}:{config.TRADING_START_MINUTE:02d} - {config.TRADING_END_HOUR}:{config.TRADING_END_MINUTE:02d} IST")
         print(f"Check Interval: {config.CHECK_INTERVAL_SECONDS} seconds")
         print("="*70)

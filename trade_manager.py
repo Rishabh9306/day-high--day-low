@@ -172,6 +172,22 @@ class TradeManager:
         print(f"Option Price: {option_price}")
         print(f"Quantity: {self.quantity}")
         
+        # Calculate SL and Target (VIX-based or fixed)
+        if config.USE_VIX_BASED_TARGETS:
+            vix = self.data_fetcher.get_india_vix()
+            if vix:
+                sl_percent = int(vix * config.VIX_SL_MULTIPLIER)
+                target_percent = int(vix * config.VIX_TARGET_MULTIPLIER)
+                print(f"India VIX: {vix}% → SL: {sl_percent}%, Target: {target_percent}%")
+            else:
+                # Fallback to fixed if VIX fetch fails
+                print("⚠️  VIX fetch failed, using fixed percentages")
+                sl_percent = config.STOP_LOSS_PERCENT
+                target_percent = config.TARGET_PERCENT
+        else:
+            sl_percent = config.STOP_LOSS_PERCENT
+            target_percent = config.TARGET_PERCENT
+        
         # Place order
         self.order_id = self.broker.place_option_order(self.strike, option_type, 
                                                         quantity=self.quantity)
@@ -179,8 +195,8 @@ class TradeManager:
         if self.order_id:
             self.current_position = option_type
             self.entry_price = option_price
-            self.stop_loss = option_price * (1 - config.STOP_LOSS_PERCENT / 100)
-            self.target = option_price * (1 + config.TARGET_PERCENT / 100)
+            self.stop_loss = option_price * (1 - sl_percent / 100)
+            self.target = option_price * (1 + target_percent / 100)
             self.trades_today += 1
             
             if option_type == "CE":
@@ -189,8 +205,8 @@ class TradeManager:
                 self.low_breakout_triggered = True
             
             print(f"Entry Price: {self.entry_price}")
-            print(f"Stop Loss: {self.stop_loss:.2f} (-{config.STOP_LOSS_PERCENT}%)")
-            print(f"Target: {self.target:.2f} (+{config.TARGET_PERCENT}%)")
+            print(f"Stop Loss: {self.stop_loss:.2f} (-{sl_percent}%)")
+            print(f"Target: {self.target:.2f} (+{target_percent}%)")
             print(f"Order ID: {self.order_id}")
             
             self.save_state()

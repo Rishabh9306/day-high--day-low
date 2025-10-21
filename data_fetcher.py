@@ -99,6 +99,33 @@ class DataFetcher:
         except Exception as e:
             print(f"Error fetching today's high/low: {e}")
             return None, None
+    
+    def get_india_vix(self) -> Optional[float]:
+        """
+        Get current India VIX value
+        Returns: vix_value (as percentage, e.g., 11.30 for 11.30%)
+        """
+        try:
+            vix_ticker = yf.Ticker("^INDIAVIX")
+            
+            # Try to get the most recent intraday data
+            data = vix_ticker.history(period='1d', interval='1m')
+            
+            if data.empty:
+                # Fallback to daily data
+                data = vix_ticker.history(period='5d', interval='1d')
+            
+            if data.empty:
+                print("Error: No India VIX data available")
+                return None
+            
+            vix_value = round(data['Close'].iloc[-1], 2)
+            print(f"India VIX: {vix_value}%")
+            return vix_value
+            
+        except Exception as e:
+            print(f"Error fetching India VIX: {e}")
+            return None
 
 
 if __name__ == "__main__":
@@ -116,3 +143,9 @@ if __name__ == "__main__":
     
     today_high, today_low = fetcher.get_today_high_low()
     print(f"Today - High: {today_high}, Low: {today_low}")
+    
+    vix = fetcher.get_india_vix()
+    if vix:
+        print(f"\nIndia VIX: {vix}%")
+        print(f"Dynamic Stop Loss: {int(vix)}%")
+        print(f"Dynamic Target: {int(vix * 3)}%")

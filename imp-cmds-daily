@@ -1,0 +1,14 @@
+cd /home/draxxy/dayhigh-daylow && sudo systemctl stop nifty-trading-bot && .venv/bin/python get_access_token.py
+
+sudo cp /home/draxxy/dayhigh-daylow/nifty-trading-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart nifty-trading-bot
+
+tail -f /home/draxxy/dayhigh-daylow/logs/bot.log
+
+sudo systemctl stop nifty-trading-bot
+
+
+
+
+sudo journalctl -u nifty-trading-bot -n 100
+
+sudo journalctl -u nifty-trading-bot --since today
