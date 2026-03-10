@@ -9,11 +9,13 @@ from typing import Optional, Dict
 import config
 from data_fetcher import DataFetcher
 from kite_broker import KiteBroker
+import time
 
 class TradeManager:
     def __init__(self):
-        self.data_fetcher = DataFetcher()
         self.broker = KiteBroker()
+        # Pass kite instance to data_fetcher so it uses Zerodha API
+        self.data_fetcher = DataFetcher(kite=self.broker.kite)
         self.ist = pytz.timezone('Asia/Kolkata')
         
         # Trade state
@@ -31,6 +33,16 @@ class TradeManager:
         # Flags
         self.high_breakout_triggered = False
         self.low_breakout_triggered = False
+        
+        # Aggressive monitoring timers (reconcile_position now runs EVERY loop - no timer needed)
+        self.last_order_check_time = None
+        self.order_check_interval = config.ORDER_BOOK_CHECK_INTERVAL
+        
+        self.last_trade_analysis_time = None
+        self.trade_analysis_interval = config.TRADE_ANALYSIS_INTERVAL
+        
+        self.last_margin_check_time = None
+        self.margin_check_interval = config.MARGIN_CHECK_INTERVAL
         
         self.load_state()
     
@@ -188,17 +200,32 @@ class TradeManager:
             sl_percent = config.STOP_LOSS_PERCENT
             target_percent = config.TARGET_PERCENT
         
-        # Place order
-        self.order_id = self.broker.place_option_order(self.strike, option_type, 
-                                                        quantity=self.quantity)
+        # Place order and verify actual fill price
+        print(f"\n🔄 Placing order with verification...")
+        order_result = self.broker.place_option_order_verified(self.strike, option_type, 
+                                                               quantity=self.quantity)
         
-        if self.order_id:
+        if order_result and order_result['status'] == 'COMPLETE':
+            self.order_id = order_result['order_id']
             self.current_position = option_type
-            self.entry_price = option_price
-            self.stop_loss = option_price * (1 - sl_percent / 100)
-            self.target = option_price * (1 + target_percent / 100)
+            
+            # Use ACTUAL fill price, not the quote
+            actual_fill_price = order_result['average_price']
+            self.entry_price = actual_fill_price
+            
+            # Recalculate SL and Target based on ACTUAL entry price
+            self.stop_loss = actual_fill_price * (1 - sl_percent / 100)
+            self.target = actual_fill_price * (1 + target_percent / 100)
             self.trades_today += 1
             
+            print(f"\n✅ ORDER FILLED SUCCESSFULLY")
+            print(f"Quote Price: ₹{option_price}")
+            print(f"Actual Fill: ₹{actual_fill_price}")
+            if abs(actual_fill_price - option_price) > 1:
+                diff = actual_fill_price - option_price
+                print(f"⚠️  Slippage: ₹{diff:+.2f}")
+            
+            # Mark breakout as triggered
             if option_type == "CE":
                 self.high_breakout_triggered = True
             else:
@@ -220,26 +247,46 @@ class TradeManager:
                 'quantity': self.quantity,
                 'order_id': self.order_id
             })
+        elif order_result:
+            print(f"❌ Order {order_result['status']}: {order_result.get('error', 'Unknown error')}")
+            return
+        else:
+            print(f"❌ Order placement failed")
+            return
     
     def exit_trade(self, reason: str, current_price: float):
         """
-        Exit current trade
+        Exit current trade. Uses verified exit (polls for fill confirmation).
+        State is only reset if the exit order is confirmed COMPLETE.
         """
-        if not self.current_position:
+        if not self.current_position or not self.entry_price:
             return
         
         print(f"\n{'='*60}")
         print(f"EXITING {self.current_position} TRADE - {reason}")
         print(f"{'='*60}")
         
-        exit_order_id = self.broker.exit_position(self.strike, self.current_position, 
-                                                   self.quantity)
+        exit_result = self.broker.exit_position_verified(
+            self.strike, self.current_position, self.quantity
+        )
+
+        if not exit_result or exit_result['status'] != 'COMPLETE':
+            # Exit order failed or unconfirmed — do NOT reset state.
+            # Keep monitoring; next loop iteration will retry.
+            status = exit_result['status'] if exit_result else 'NO_RESULT'
+            print(f"🚨 EXIT ORDER NOT CONFIRMED (status={status}). "
+                  f"Position still tracked. Will retry next cycle.")
+            return
+
+        # Use actual fill price for P&L if available
+        actual_exit_price = exit_result.get('average_price') or current_price
+        exit_order_id = exit_result.get('order_id')
+
+        pnl = (actual_exit_price - self.entry_price) / self.entry_price * 100
+        pnl_amount = (actual_exit_price - self.entry_price) * self.quantity
         
-        pnl = (current_price - self.entry_price) / self.entry_price * 100
-        pnl_amount = (current_price - self.entry_price) * self.quantity
-        
-        print(f"Entry Price: {self.entry_price}")
-        print(f"Exit Price: {current_price}")
+        print(f"Entry Price: ₹{self.entry_price}")
+        print(f"Exit Price:  ₹{actual_exit_price:.2f} (pre-exit LTP was ₹{current_price})")
         print(f"P&L: {pnl:.2f}%")
         print(f"P&L Amount: ₹{pnl_amount:.2f}")
         
@@ -247,7 +294,8 @@ class TradeManager:
             'option_type': self.current_position,
             'strike': self.strike,
             'entry_price': self.entry_price,
-            'exit_price': current_price,
+            'exit_price': actual_exit_price,
+            'exit_ltp_at_trigger': current_price,
             'reason': reason,
             'pnl_percent': pnl,
             'pnl_amount': pnl_amount,
@@ -255,7 +303,7 @@ class TradeManager:
             'exit_order_id': exit_order_id
         })
         
-        # Reset position
+        # Reset position only after confirmed exit
         self.current_position = None
         self.entry_price = None
         self.stop_loss = None
@@ -273,6 +321,10 @@ class TradeManager:
         if not self.current_position:
             return
         
+        # AGGRESSIVE: Reconcile position EVERY time (10 times/sec when in position)
+        # This uses 100% of Zerodha's Positions API limit (10 calls/sec = 36,000/hour)
+        self.reconcile_position()
+        
         expiry = self.broker.get_nearest_expiry()
         symbol = self.broker.get_option_symbol(self.strike, self.current_position, expiry)
         current_price = self.broker.get_option_ltp(symbol)
@@ -289,6 +341,81 @@ class TradeManager:
         if current_price >= self.target:
             self.exit_trade("TARGET", current_price)
             return
+    
+    def reconcile_position(self):
+        """
+        Reconcile our position with Zerodha to catch any discrepancies
+        """
+        if not self.current_position or not self.strike:
+            return
+        
+        expiry = self.broker.get_nearest_expiry()
+        symbol = self.broker.get_option_symbol(self.strike, self.current_position, expiry)
+        
+        position_data = self.broker.reconcile_position(symbol)
+        
+        if position_data:
+            actual_entry = position_data['actual_entry']
+            
+            # Check if entry price differs
+            if abs(actual_entry - self.entry_price) > 0.5:
+                print(f"\n⚠️  POSITION RECONCILIATION ALERT")
+                print(f"Bot Entry Price: ₹{self.entry_price}")
+                print(f"Zerodha Actual Entry: ₹{actual_entry}")
+                print(f"Difference: ₹{actual_entry - self.entry_price:+.2f}")
+                
+                # Update to actual entry price
+                old_sl = self.stop_loss
+                old_target = self.target
+                
+                self.entry_price = actual_entry
+                
+                # Recalculate SL and Target
+                if config.USE_VIX_BASED_TARGETS:
+                    vix = self.data_fetcher.get_india_vix()
+                    if vix:
+                        sl_percent = int(vix * config.VIX_SL_MULTIPLIER)
+                        target_percent = int(vix * config.VIX_TARGET_MULTIPLIER)
+                    else:
+                        sl_percent = config.STOP_LOSS_PERCENT
+                        target_percent = config.TARGET_PERCENT
+                else:
+                    sl_percent = config.STOP_LOSS_PERCENT
+                    target_percent = config.TARGET_PERCENT
+                
+                self.stop_loss = actual_entry * (1 - sl_percent / 100)
+                self.target = actual_entry * (1 + target_percent / 100)
+                
+                print(f"Updated SL: ₹{old_sl:.2f} → ₹{self.stop_loss:.2f}")
+                print(f"Updated Target: ₹{old_target:.2f} → ₹{self.target:.2f}")
+                
+                self.save_state()
+            
+            # Log current P&L
+            pnl = position_data.get('pnl', 0)
+            last_price = position_data.get('last_price', 0)
+            if pnl != 0:
+                print(f"📊 Position: {symbol} | LTP: ₹{last_price} | P&L: ₹{pnl:+.2f}")
+        else:
+            print(f"⚠️  Position for {symbol} not found in Zerodha positions")
+            # Position was force-closed by broker (margin call, circuit, auto-square-off).
+            # Reset local state so the bot does not stay frozen thinking it holds a position.
+            print(f"🚨 FORCE-CLOSE DETECTED: Resetting local position state.")
+            self.log_trade("FORCE_CLOSE_DETECTED", {
+                'option_type': self.current_position,
+                'strike': self.strike,
+                'entry_price': self.entry_price,
+                'symbol': symbol,
+                'note': 'Position not found in Zerodha — assumed force-closed by broker'
+            })
+            self.current_position = None
+            self.entry_price = None
+            self.stop_loss = None
+            self.target = None
+            self.order_id = None
+            self.strike = None
+            self.quantity = None
+            self.save_state()
     
     def check_entry_conditions(self):
         """
@@ -316,14 +443,76 @@ class TradeManager:
             self.enter_trade("PE", current_price)
             return
     
+    def aggressive_order_monitoring(self):
+        """
+        AGGRESSIVE: Monitor all orders every 5 seconds
+        Zerodha limit: 10/sec = 720/minute (we use 12/minute = 1.6%)
+        """
+        now = time.time()
+        if self.last_order_check_time is None or (now - self.last_order_check_time) >= self.order_check_interval:
+            orders = self.broker.get_all_orders()
+            
+            if orders:
+                analysis = self.broker.analyze_order_book(orders)
+                if analysis['rejected'] > 0 or analysis['pending'] > 0:
+                    print(f"⚠️  Orders: {analysis['complete']} complete, {analysis['pending']} pending, {analysis['rejected']} rejected")
+            
+            self.last_order_check_time = now
+    
+    def aggressive_trade_analysis(self):
+        """
+        AGGRESSIVE: Analyze all trades every 60 seconds
+        Zerodha limit: 10/sec = 60/hour for this check (negligible)
+        """
+        now = time.time()
+        if self.last_trade_analysis_time is None or (now - self.last_trade_analysis_time) >= self.trade_analysis_interval:
+            trades = self.broker.get_all_trades()
+            
+            if trades:
+                analysis = self.broker.analyze_trade_execution(trades)
+                if analysis['total_trades'] > 0:
+                    print(f"📈 Trades: {analysis['total_trades']} fills, Avg Price: ₹{analysis['avg_price']:.2f}")
+            
+            self.last_trade_analysis_time = now
+    
+    def aggressive_margin_monitoring(self):
+        """
+        AGGRESSIVE: Check margins every 10 seconds
+        Zerodha limit: 10/sec = 360/hour for this check (<1%)
+        """
+        now = time.time()
+        if self.last_margin_check_time is None or (now - self.last_margin_check_time) >= self.margin_check_interval:
+            margins = self.broker.get_margins()
+            
+            if margins and 'equity' in margins:
+                available = margins['equity'].get('available', {}).get('live_balance', 0)
+                used = margins['equity'].get('utilised', {}).get('debits', 0)
+                
+                if available > 0:
+                    utilization = (used / (available + used)) * 100 if (available + used) > 0 else 0
+                    if utilization > 80:
+                        print(f"⚠️  High margin usage: {utilization:.1f}% (₹{used:.0f}/₹{available+used:.0f})")
+            
+            self.last_margin_check_time = now
+    
     def monitor_positions(self):
         """
-        Main monitoring loop
+        Main monitoring loop with AGGRESSIVE API usage
+        Maximizes Zerodha API calls within rate limits
         """
         if not self.is_trading_hours():
             return
         
-        # Check exit conditions first
+        # AGGRESSIVE: Order book monitoring (every 5s)
+        self.aggressive_order_monitoring()
+        
+        # AGGRESSIVE: Trade analysis (every 60s)
+        self.aggressive_trade_analysis()
+        
+        # AGGRESSIVE: Margin monitoring (every 10s)
+        self.aggressive_margin_monitoring()
+        
+        # Check exit conditions first (with 1s position reconciliation)
         if self.current_position:
             self.check_exit_conditions()
         

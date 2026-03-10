@@ -58,7 +58,7 @@ def test_config():
             ("STOP_LOSS_PERCENT defined", hasattr(config, 'STOP_LOSS_PERCENT')),
             ("TARGET_PERCENT defined", hasattr(config, 'TARGET_PERCENT')),
             ("TRADING_START_HOUR defined", hasattr(config, 'TRADING_START_HOUR')),
-            ("CHECK_INTERVAL_SECONDS defined", hasattr(config, 'CHECK_INTERVAL_SECONDS')),
+            ("CHECK_INTERVAL_IDLE defined", hasattr(config, 'CHECK_INTERVAL_IDLE')),
         ]
         
         all_passed = True
@@ -68,9 +68,9 @@ def test_config():
                 all_passed = False
         
         # Check values
-        print_test("Stop Loss = 20%", config.STOP_LOSS_PERCENT == 20, 
+        print_test("Stop Loss = 10%", config.STOP_LOSS_PERCENT == 10, 
                   f"Current: {config.STOP_LOSS_PERCENT}")
-        print_test("Target = 40%", config.TARGET_PERCENT == 40, 
+        print_test("Target = 20%", config.TARGET_PERCENT == 20, 
                   f"Current: {config.TARGET_PERCENT}")
         
         return all_passed

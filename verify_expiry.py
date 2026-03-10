@@ -75,6 +75,9 @@ print("-" * 70)
 from data_fetcher import DataFetcher
 fetcher = DataFetcher()
 spot = fetcher.get_current_price()
+if spot is None:
+    print("❌ Could not fetch current price. Exiting.")
+    exit(1)
 atm_strike = broker.get_atm_strike(spot)
 
 print(f"Spot Price: ₹{spot}")
