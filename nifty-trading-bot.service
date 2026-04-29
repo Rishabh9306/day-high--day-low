@@ -7,14 +7,14 @@ Wants=network-online.target
 Type=simple
 User=draxxy
 Group=draxxy
-WorkingDirectory=/home/draxxy/dayhigh-daylow
-Environment="PATH=/home/draxxy/dayhigh-daylow/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+WorkingDirectory=/home/draxxy/Projects/Random/dayhigh-daylow
+Environment="PATH=/home/draxxy/Projects/Random/dayhigh-daylow/.venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/draxxy/dayhigh-daylow/.venv/bin/python -u /home/draxxy/dayhigh-daylow/main.py
+ExecStart=/home/draxxy/Projects/Random/dayhigh-daylow/.venv/bin/python -u /home/draxxy/Projects/Random/dayhigh-daylow/main.py
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/draxxy/dayhigh-daylow/logs/bot.log
-StandardError=append:/home/draxxy/dayhigh-daylow/logs/bot-error.log
+StandardOutput=append:/home/draxxy/Projects/Random/dayhigh-daylow/logs/bot.log
+StandardError=append:/home/draxxy/Projects/Random/dayhigh-daylow/logs/bot-error.log
 
 # Logging
 SyslogIdentifier=nifty-trading-bot

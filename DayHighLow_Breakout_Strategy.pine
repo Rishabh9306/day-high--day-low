@@ -1,0 +1,254 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © dayhigh-daylow Strategy Conversion
+
+//@version=6
+strategy("Day High/Low Breakout Strategy", overlay=true, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=100,
+         initial_capital=50000,
+         commission_type=strategy.commission.percent,
+         commission_value=0.03,
+         slippage=2,
+         calc_on_every_tick=true,
+         process_orders_on_close=false,
+         max_bars_back=500)
+
+// ============================================================================
+// STRATEGY OVERVIEW
+// ============================================================================
+// This strategy trades breakouts based on the previous day's high/low:
+// - BUY (Long/CE): When price crosses ABOVE previous day's HIGH
+// - SELL (Short/PE): When price crosses BELOW previous day's LOW
+// 
+// Risk Management:
+// - VIX-based (default): SL = VIX × multiplier, Target = VIX × multiplier
+// - Fixed percentages: SL = 10%, Target = 20%
+// - EOD Square-off at 15:15 (3:15 PM IST)
+// - Maximum 1 trade per day
+// ============================================================================
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+grpGeneral = "General Settings"
+maxTradesPerDay = input.int(1, "Max Trades Per Day", minval=1, maxval=5, group=grpGeneral)
+tradingStartHour = input.int(9, "Trading Start Hour", minval=0, maxval=23, group=grpGeneral)
+tradingStartMinute = input.int(15, "Trading Start Minute", minval=0, maxval=59, group=grpGeneral)
+tradingEndHour = input.int(15, "Trading End Hour", minval=0, maxval=23, group=grpGeneral)
+tradingEndMinute = input.int(15, "Trading End Minute", minval=0, maxval=59, group=grpGeneral)
+
+grpRisk = "Risk Management"
+useVixBasedTargets = input.bool(true, "Use VIX-Based Targets", group=grpRisk)
+vixSymbol = input.symbol("NSE:INDIAVIX", "India VIX Symbol", group=grpRisk)
+vixSlMultiplier = input.float(1.0, "VIX SL Multiplier", minval=0.1, maxval=5.0, step=0.1, group=grpRisk)
+vixTargetMultiplier = input.float(3.0, "VIX Target Multiplier", minval=0.5, maxval=10.0, step=0.1, group=grpRisk)
+fixedSlPercent = input.float(10.0, "Fixed Stop Loss %", minval=1.0, maxval=50.0, step=0.5, group=grpRisk)
+fixedTargetPercent = input.float(20.0, "Fixed Target %", minval=1.0, maxval=100.0, step=0.5, group=grpRisk)
+
+grpVisual = "Visual Settings"
+showPrevDayLevels = input.bool(true, "Show Previous Day High/Low", group=grpVisual)
+showSlTpLines = input.bool(true, "Show SL/TP Lines", group=grpVisual)
+showLabels = input.bool(true, "Show Entry/Exit Labels", group=grpVisual)
+showInfoTable = input.bool(true, "Show Info Table", group=grpVisual)
+
+grpBacktest = "Backtest Settings"
+filterWeekends = input.bool(true, "Filter Weekends", group=grpBacktest)
+allowLong = input.bool(true, "Allow Long (CE) Trades", group=grpBacktest)
+allowShort = input.bool(true, "Allow Short (PE) Trades", group=grpBacktest)
+
+// ============================================================================
+// PREVIOUS DAY HIGH/LOW CALCULATION
+// ============================================================================
+// Use request.security to get previous day's high and low
+[prevDayHigh, prevDayLow, prevDayClose] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+
+// ============================================================================
+// INDIA VIX FOR DYNAMIC SL/TARGET
+// ============================================================================
+indiaVix = request.security(vixSymbol, "D", close, lookahead=barmerge.lookahead_on)
+
+// Calculate SL and Target percentages
+slPercent = useVixBasedTargets and not na(indiaVix) ? indiaVix * vixSlMultiplier : fixedSlPercent
+targetPercent = useVixBasedTargets and not na(indiaVix) ? indiaVix * vixTargetMultiplier : fixedTargetPercent
+
+// ============================================================================
+// TIME FUNCTIONS
+// ============================================================================
+// Get current time in exchange timezone
+currentHour = hour(time, syminfo.timezone)
+currentMinute = minute(time, syminfo.timezone)
+dayOfWeek = dayofweek(time, syminfo.timezone)
+
+// Check if within trading hours (9:15 AM to 3:15 PM)
+isTradingHours = (currentHour > tradingStartHour or 
+                  (currentHour == tradingStartHour and currentMinute >= tradingStartMinute)) and
+                 (currentHour < tradingEndHour or 
+                  (currentHour == tradingEndHour and currentMinute < tradingEndMinute))
+
+// Check for EOD square-off time
+isEodTime = currentHour == tradingEndHour and currentMinute >= tradingEndMinute
+
+// Check if it's a weekday (Monday = 2, Friday = 6 in Pine Script)
+isWeekday = not filterWeekends or (dayOfWeek >= 2 and dayOfWeek <= 6)
+
+// New trading day detection
+isNewDay = ta.change(time("D")) != 0
+
+// ============================================================================
+// TRADE TRACKING VARIABLES
+// ============================================================================
+var int tradesToday = 0
+var bool highBreakoutTriggered = false
+var bool lowBreakoutTriggered = false
+var float entryPrice = na
+var float stopLossPrice = na
+var float targetPrice = na
+var string currentPositionType = ""
+
+// Reset counters on new day
+if isNewDay
+    tradesToday := 0
+    highBreakoutTriggered := false
+    lowBreakoutTriggered := false
+    currentPositionType := ""
+
+// ============================================================================
+// BREAKOUT DETECTION
+// ============================================================================
+// High breakout (bullish) - price crosses above previous day's high
+highBreakout = not na(prevDayHigh) and ta.crossover(close, prevDayHigh)
+
+// Low breakout (bearish) - price crosses below previous day's low
+lowBreakout = not na(prevDayLow) and ta.crossunder(close, prevDayLow)
+
+// ============================================================================
+// ENTRY CONDITIONS
+// ============================================================================
+canTakeTrade = strategy.position_size == 0 and tradesToday < maxTradesPerDay and isTradingHours and isWeekday
+
+// Long entry (CE - Call Option equivalent)
+longCondition = canTakeTrade and highBreakout and not highBreakoutTriggered and allowLong
+
+// Short entry (PE - Put Option equivalent)
+shortCondition = canTakeTrade and lowBreakout and not lowBreakoutTriggered and allowShort
+
+// ============================================================================
+// ENTRY LOGIC
+// ============================================================================
+if longCondition
+    entryPrice := close
+    stopLossPrice := close * (1 - slPercent / 100)
+    targetPrice := close * (1 + targetPercent / 100)
+    
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=stopLossPrice, limit=targetPrice)
+    
+    tradesToday += 1
+    highBreakoutTriggered := true
+    currentPositionType := "LONG (CE)"
+    
+    if showLabels
+        label.new(bar_index, low, "LONG\n" + str.tostring(close, "#.##"), 
+                  color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if shortCondition
+    entryPrice := close
+    stopLossPrice := close * (1 + slPercent / 100)
+    targetPrice := close * (1 - targetPercent / 100)
+    
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=stopLossPrice, limit=targetPrice)
+    
+    tradesToday += 1
+    lowBreakoutTriggered := true
+    currentPositionType := "SHORT (PE)"
+    
+    if showLabels
+        label.new(bar_index, high, "SHORT\n" + str.tostring(close, "#.##"), 
+                  color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ============================================================================
+// EOD SQUARE-OFF
+// ============================================================================
+if isEodTime and strategy.position_size != 0
+    strategy.close_all(comment="EOD Square Off")
+    if showLabels
+        label.new(bar_index, close, "EOD\nEXIT", 
+                  color=color.orange, textcolor=color.white, style=label.style_label_center, size=size.small)
+
+// Reset position tracking when position is closed
+if strategy.position_size == 0
+    entryPrice := na
+    stopLossPrice := na
+    targetPrice := na
+    currentPositionType := ""
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+// Previous day high/low levels
+plot(showPrevDayLevels and not na(prevDayHigh) ? prevDayHigh : na, 
+     "Previous Day High", color=color.new(color.green, 30), linewidth=2, style=plot.style_stepline)
+plot(showPrevDayLevels and not na(prevDayLow) ? prevDayLow : na, 
+     "Previous Day Low", color=color.new(color.red, 30), linewidth=2, style=plot.style_stepline)
+
+// Stop Loss and Target lines when in position
+plot(showSlTpLines and strategy.position_size > 0 ? stopLossPrice : na, 
+     "Stop Loss (Long)", color=color.red, linewidth=1, style=plot.style_linebr)
+plot(showSlTpLines and strategy.position_size > 0 ? targetPrice : na, 
+     "Target (Long)", color=color.green, linewidth=1, style=plot.style_linebr)
+plot(showSlTpLines and strategy.position_size < 0 ? stopLossPrice : na, 
+     "Stop Loss (Short)", color=color.red, linewidth=1, style=plot.style_linebr)
+plot(showSlTpLines and strategy.position_size < 0 ? targetPrice : na, 
+     "Target (Short)", color=color.green, linewidth=1, style=plot.style_linebr)
+
+// Background color for trading hours
+bgcolor(isTradingHours and isWeekday ? color.new(color.blue, 95) : na, title="Trading Hours Background")
+
+// Highlight breakout bars
+barcolor(highBreakout ? color.lime : lowBreakout ? color.fuchsia : na)
+
+// ============================================================================
+// INFO TABLE
+// ============================================================================
+if showInfoTable and barstate.islast
+    var table infoTable = table.new(position.top_right, 2, 10, 
+                                    bgcolor=color.new(color.black, 80), 
+                                    border_width=1, border_color=color.gray)
+    
+    table.cell(infoTable, 0, 0, "Parameter", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 0, "Value", text_color=color.white, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 1, "Prev Day High", text_color=color.green, text_halign=text.align_left)
+    table.cell(infoTable, 1, 1, str.tostring(prevDayHigh, "#.##"), text_color=color.green, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 2, "Prev Day Low", text_color=color.red, text_halign=text.align_left)
+    table.cell(infoTable, 1, 2, str.tostring(prevDayLow, "#.##"), text_color=color.red, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 3, "Current Price", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 3, str.tostring(close, "#.##"), text_color=color.white, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 4, "India VIX", text_color=color.yellow, text_halign=text.align_left)
+    table.cell(infoTable, 1, 4, str.tostring(indiaVix, "#.##") + "%", text_color=color.yellow, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 5, "SL %", text_color=color.red, text_halign=text.align_left)
+    table.cell(infoTable, 1, 5, str.tostring(slPercent, "#.##") + "%", text_color=color.red, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 6, "Target %", text_color=color.green, text_halign=text.align_left)
+    table.cell(infoTable, 1, 6, str.tostring(targetPercent, "#.##") + "%", text_color=color.green, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 7, "Trades Today", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 7, str.tostring(tradesToday) + "/" + str.tostring(maxTradesPerDay), text_color=color.white, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 8, "High Breakout", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 8, highBreakoutTriggered ? "✓" : "✗", text_color=highBreakoutTriggered ? color.green : color.gray, text_halign=text.align_right)
+    
+    table.cell(infoTable, 0, 9, "Low Breakout", text_color=color.white, text_halign=text.align_left)
+    table.cell(infoTable, 1, 9, lowBreakoutTriggered ? "✓" : "✗", text_color=lowBreakoutTriggered ? color.red : color.gray, text_halign=text.align_right)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+alertcondition(longCondition, title="Long Entry (High Breakout)", message="HIGH BREAKOUT: Price {{close}} crossed above Previous Day High {{plot_0}}. BUY CE!")
+alertcondition(shortCondition, title="Short Entry (Low Breakout)", message="LOW BREAKOUT: Price {{close}} crossed below Previous Day Low {{plot_1}}. BUY PE!")
+alertcondition(isEodTime and strategy.position_size != 0, title="EOD Square Off", message="EOD SQUARE OFF: Closing all positions at {{close}}")

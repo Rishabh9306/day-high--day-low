@@ -9,6 +9,7 @@ from typing import Optional, Dict
 import config
 from data_fetcher import DataFetcher
 from kite_broker import KiteBroker
+import notifier
 import time
 
 class TradeManager:
@@ -29,6 +30,10 @@ class TradeManager:
         self.strike = None
         self.quantity = None
         self.trades_today = 0
+        
+        # Trailing Stop Loss state (per-trade — resets on exit)
+        self.trailing_sl_active = False
+        self.highest_price_seen = 0.0   # Persisted: prevents TSL regression after restart
         
         # Flags
         self.high_breakout_triggered = False
@@ -70,6 +75,9 @@ class TradeManager:
                         self.trades_today = state.get('trades_today', 0)
                         self.high_breakout_triggered = state.get('high_breakout_triggered', False)
                         self.low_breakout_triggered = state.get('low_breakout_triggered', False)
+                        # TSL state — critical for restart persistence
+                        self.trailing_sl_active = state.get('trailing_sl_active', False)
+                        self.highest_price_seen = state.get('highest_price_seen', 0.0)
                         print("Loaded existing trade state")
         except Exception as e:
             print(f"Error loading state: {e}")
@@ -91,6 +99,9 @@ class TradeManager:
                 'trades_today': self.trades_today,
                 'high_breakout_triggered': self.high_breakout_triggered,
                 'low_breakout_triggered': self.low_breakout_triggered,
+                # TSL state — must persist for restart safety
+                'trailing_sl_active': self.trailing_sl_active,
+                'highest_price_seen': self.highest_price_seen,
             }
             
             with open('trade_state.json', 'w') as f:
@@ -218,6 +229,10 @@ class TradeManager:
             self.target = actual_fill_price * (1 + target_percent / 100)
             self.trades_today += 1
             
+            # Initialize per-trade TSL state
+            self.trailing_sl_active = False
+            self.highest_price_seen = actual_fill_price
+            
             print(f"\n✅ ORDER FILLED SUCCESSFULLY")
             print(f"Quote Price: ₹{option_price}")
             print(f"Actual Fill: ₹{actual_fill_price}")
@@ -234,6 +249,8 @@ class TradeManager:
             print(f"Entry Price: {self.entry_price}")
             print(f"Stop Loss: {self.stop_loss:.2f} (-{sl_percent}%)")
             print(f"Target: {self.target:.2f} (+{target_percent}%)")
+            if config.ENABLE_TRAILING_SL:
+                print(f"TSL: ON — steps at {[s[0] for s in config.TRAILING_SL_STEPS]}%")
             print(f"Order ID: {self.order_id}")
             
             self.save_state()
@@ -247,11 +264,17 @@ class TradeManager:
                 'quantity': self.quantity,
                 'order_id': self.order_id
             })
+            
+            # Telegram: order filled
+            notifier.notify_entry(option_type, self.strike, actual_fill_price,
+                                  self.stop_loss, self.target, self.quantity)
         elif order_result:
             print(f"❌ Order {order_result['status']}: {order_result.get('error', 'Unknown error')}")
+            notifier.notify_error(f"Order {order_result['status']}: {order_result.get('error', '')}")
             return
         else:
             print(f"❌ Order placement failed")
+            notifier.notify_error("Order placement failed — no order_id returned")
             return
     
     def exit_trade(self, reason: str, current_price: float):
@@ -289,6 +312,12 @@ class TradeManager:
         print(f"Exit Price:  ₹{actual_exit_price:.2f} (pre-exit LTP was ₹{current_price})")
         print(f"P&L: {pnl:.2f}%")
         print(f"P&L Amount: ₹{pnl_amount:.2f}")
+        if self.trailing_sl_active:
+            print(f"Peak Profit Seen: +{((self.highest_price_seen - self.entry_price) / self.entry_price * 100):.1f}%")
+        
+        # Telegram: position exited
+        notifier.notify_exit(self.current_position, self.strike, self.entry_price,
+                             actual_exit_price, pnl, pnl_amount, reason)
         
         self.log_trade("EXIT", {
             'option_type': self.current_position,
@@ -300,10 +329,12 @@ class TradeManager:
             'pnl_percent': pnl,
             'pnl_amount': pnl_amount,
             'quantity': self.quantity,
-            'exit_order_id': exit_order_id
+            'exit_order_id': exit_order_id,
+            'trailing_sl_active': self.trailing_sl_active,
+            'highest_price_seen': self.highest_price_seen,
         })
         
-        # Reset position only after confirmed exit
+        # Reset position AND per-trade TSL state after confirmed exit
         self.current_position = None
         self.entry_price = None
         self.stop_loss = None
@@ -311,12 +342,69 @@ class TradeManager:
         self.order_id = None
         self.strike = None
         self.quantity = None
+        self.trailing_sl_active = False
+        self.highest_price_seen = 0.0
         
         self.save_state()
     
+    def update_trailing_sl(self, current_price: float):
+        """
+        Step-based Trailing Stop Loss.
+        Ratchets the SL upward as profit crosses predefined thresholds.
+        SL NEVER moves back down. Persists highest_price_seen for restart safety.
+        If a step has lock='EXIT', immediately triggers a trade exit.
+        
+        Returns: 'EXIT' if the hard-exit threshold was crossed, else None.
+        """
+        if not config.ENABLE_TRAILING_SL:
+            return None
+        
+        if not self.entry_price or self.entry_price <= 0:
+            return None
+        
+        # Track the highest option price seen during this trade (persisted)
+        if current_price > self.highest_price_seen:
+            self.highest_price_seen = current_price
+        
+        # Calculate current profit percentage
+        profit_pct = ((current_price - self.entry_price) / self.entry_price) * 100
+        
+        # Find the highest applicable trailing step (iterate in reverse)
+        for threshold, sl_level in reversed(config.TRAILING_SL_STEPS):
+            if profit_pct >= threshold:
+                # Hard exit step
+                if sl_level == 'EXIT':
+                    print(f"\n🎯 TSL HARD EXIT TRIGGERED!")
+                    print(f"   Profit: +{profit_pct:.1f}% crossed +{threshold}% threshold")
+                    notifier.notify_trailing_exit(profit_pct, current_price)
+                    return 'EXIT'
+                
+                # Calculate the new SL price
+                candidate_sl = round(self.entry_price * (1 + sl_level / 100), 2)
+                
+                # SL must ONLY move UP, never down
+                if candidate_sl > self.stop_loss:
+                    old_sl = self.stop_loss
+                    self.stop_loss = candidate_sl
+                    self.trailing_sl_active = True
+                    
+                    print(f"\n📈 TRAILING SL TRIGGERED!")
+                    print(f"   Profit: +{profit_pct:.1f}% | Peak: +{((self.highest_price_seen - self.entry_price) / self.entry_price * 100):.1f}%")
+                    print(f"   Step: +{threshold}% → SL locked at +{sl_level}%")
+                    print(f"   SL moved: ₹{old_sl:.2f} → ₹{self.stop_loss:.2f}")
+                    
+                    # Telegram: TSL moved
+                    notifier.notify_trailing_sl(profit_pct, old_sl, self.stop_loss,
+                                               threshold, sl_level)
+                    self.save_state()
+                break  # Found the highest matching step — stop looking
+        
+        return None
+    
     def check_exit_conditions(self):
         """
-        Check if exit conditions are met for current position
+        Check if exit conditions are met for current position.
+        Order: TSL update → SL check → Target check.
         """
         if not self.current_position:
             return
@@ -332,9 +420,16 @@ class TradeManager:
         if not current_price:
             return
         
-        # Check stop loss
+        # Update trailing SL (may ratchet SL up, or trigger hard exit)
+        tsl_action = self.update_trailing_sl(current_price)
+        if tsl_action == 'EXIT':
+            self.exit_trade("TSL_HARD_EXIT", current_price)
+            return
+        
+        # Check stop loss (now potentially trailing)
         if current_price <= self.stop_loss:
-            self.exit_trade("STOP_LOSS", current_price)
+            reason = "TRAILING_SL" if self.trailing_sl_active else "STOP_LOSS"
+            self.exit_trade(reason, current_price)
             return
         
         # Check target
@@ -406,8 +501,14 @@ class TradeManager:
                 'strike': self.strike,
                 'entry_price': self.entry_price,
                 'symbol': symbol,
+                'trailing_sl_active': self.trailing_sl_active,
+                'highest_price_seen': self.highest_price_seen,
                 'note': 'Position not found in Zerodha — assumed force-closed by broker'
             })
+            notifier.notify_error(
+                f"FORCE-CLOSE DETECTED\n{self.current_position} {self.strike}\n"
+                f"Position not found in Zerodha — state reset."
+            )
             self.current_position = None
             self.entry_price = None
             self.stop_loss = None
@@ -415,6 +516,8 @@ class TradeManager:
             self.order_id = None
             self.strike = None
             self.quantity = None
+            self.trailing_sl_active = False
+            self.highest_price_seen = 0.0
             self.save_state()
     
     def check_entry_conditions(self):
@@ -433,6 +536,7 @@ class TradeManager:
         if not self.high_breakout_triggered and current_price > self.prev_high:
             print(f"\n🚀 HIGH BREAKOUT DETECTED!")
             print(f"Current Price: {current_price} > Previous High: {self.prev_high}")
+            notifier.notify_breakout("HIGH", current_price, self.prev_high)
             self.enter_trade("CE", current_price)
             return
         
@@ -440,6 +544,7 @@ class TradeManager:
         if not self.low_breakout_triggered and current_price < self.prev_low:
             print(f"\n📉 LOW BREAKOUT DETECTED!")
             print(f"Current Price: {current_price} < Previous Low: {self.prev_low}")
+            notifier.notify_breakout("LOW", current_price, self.prev_low)
             self.enter_trade("PE", current_price)
             return
     

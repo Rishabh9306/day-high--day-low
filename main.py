@@ -8,8 +8,43 @@ from datetime import datetime
 import pytz
 import signal
 import sys
+import os
 import config
 from trade_manager import TradeManager
+import notifier
+
+# ── Singleton Lock ──────────────────────────────────────────────────
+# Prevents multiple bot instances from running simultaneously.
+# Duplicate instances corrupt logs and can place duplicate orders.
+LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.bot.pid')
+
+def acquire_lock():
+    """Ensure only one bot instance runs at a time using a PID lock file."""
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            # Check if that PID is still alive
+            os.kill(old_pid, 0)  # Signal 0 = just check existence
+            print(f"🚨 ABORT: Another bot instance is already running (PID: {old_pid})")
+            print(f"   Kill it first:  kill {old_pid}")
+            print(f"   Or remove lock: rm {LOCK_FILE}")
+            sys.exit(1)
+        except (ProcessLookupError, ValueError):
+            # Old process is dead — stale lock file, safe to overwrite
+            print(f"⚠️  Removing stale lock file (old PID no longer running)")
+    
+    # Write our PID
+    with open(LOCK_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+
+def release_lock():
+    """Remove the PID lock file on clean exit."""
+    try:
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+    except OSError:
+        pass
 
 class TradingBot:
     def __init__(self):
@@ -99,7 +134,10 @@ class TradingBot:
             print(f"Risk Model: Fixed Percentages")
             print(f"Stop Loss: {config.STOP_LOSS_PERCENT}% | Target: {config.TARGET_PERCENT}%")
         print(f"Trading Hours: {config.TRADING_START_HOUR}:{config.TRADING_START_MINUTE:02d} - {config.TRADING_END_HOUR}:{config.TRADING_END_MINUTE:02d} IST")
-        print(f"Check Interval: {config.CHECK_INTERVAL_SECONDS} seconds")
+        print(f"Monitoring: {config.CHECK_INTERVAL_IN_POSITION}s (in position) / {config.CHECK_INTERVAL_IDLE}s (idle)")
+        print(f"🔥 TRUE 100% API USAGE:")
+        print(f"   ✅ Quotes: 1/sec (100% of limit) | Positions: 10/sec (100% of limit)")
+        print(f"   📊 Orders: every {config.ORDER_BOOK_CHECK_INTERVAL}s | Margin: every {config.MARGIN_CHECK_INTERVAL}s | Trades: every {config.TRADE_ANALYSIS_INTERVAL}s")
         print("="*70)
         
         # Set up signal handler for graceful shutdown
@@ -120,6 +158,20 @@ class TradingBot:
                     if self.trade_manager.initialize_day():
                         self.day_initialized = True
                         print("✅ Day initialized successfully")
+                        
+                        # Telegram: bot started for the day
+                        if config.USE_VIX_BASED_TARGETS:
+                            vix = self.trade_manager.data_fetcher.get_india_vix()
+                            sl_pct = int(vix * config.VIX_SL_MULTIPLIER) if vix else config.STOP_LOSS_PERCENT
+                            tgt_pct = int(vix * config.VIX_TARGET_MULTIPLIER) if vix else config.TARGET_PERCENT
+                        else:
+                            sl_pct = config.STOP_LOSS_PERCENT
+                            tgt_pct = config.TARGET_PERCENT
+                        notifier.notify_bot_started(
+                            self.trade_manager.prev_high,
+                            self.trade_manager.prev_low,
+                            sl_pct, tgt_pct
+                        )
                     else:
                         print("⚠️  Failed to initialize day. Retrying in 5 minutes...")
                         time.sleep(300)
@@ -140,8 +192,13 @@ class TradingBot:
                 if self.day_initialized:
                     self.trade_manager.monitor_positions()
                 
-                # Wait before next check
-                time.sleep(config.CHECK_INTERVAL_SECONDS)
+                # Dynamic sleep interval based on position
+                if self.trade_manager.current_position:
+                    sleep_time = config.CHECK_INTERVAL_IN_POSITION
+                else:
+                    sleep_time = config.CHECK_INTERVAL_IDLE
+                
+                time.sleep(sleep_time)
                 
             except KeyboardInterrupt:
                 print("\n⚠️  Interrupted by user")
@@ -157,8 +214,12 @@ class TradingBot:
 
 def main():
     """Entry point"""
-    bot = TradingBot()
-    bot.run()
+    acquire_lock()
+    try:
+        bot = TradingBot()
+        bot.run()
+    finally:
+        release_lock()
 
 
 if __name__ == "__main__":

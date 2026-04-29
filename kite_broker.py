@@ -183,36 +183,43 @@ class KiteBroker:
     
     def calculate_quantity(self, option_price: float, capital: float) -> int:
         """
-        Calculate lot quantity based on available capital and current option price.
-        Nifty lot size is 75. Capped at 2 lots maximum.
+        Returns the fixed quantity from config.QUANTITY.
+        LOT SIZE IS CONTROLLED EXCLUSIVELY BY config.py (NIFTY_LOT_SIZE × MAX_LOTS).
+        No local calculation — change config.MAX_LOTS or .env MAX_LOTS to adjust.
         """
-        LOT_SIZE = 75
-        MAX_LOTS = 2
-
-        if not option_price or option_price <= 0:
-            return LOT_SIZE  # Minimum 1 lot as safe fallback
-
-        cost_per_lot = option_price * LOT_SIZE
-        affordable_lots = int(capital / cost_per_lot)
-        lots = max(1, min(affordable_lots, MAX_LOTS))
-        print(f"💰 Capital: ₹{capital}, Option: ₹{option_price:.2f}, "
-              f"Cost/lot: ₹{cost_per_lot:.0f}, Lots: {lots}")
-        return lots * LOT_SIZE
+        cost = option_price * config.QUANTITY if option_price else 0
+        print(f"💰 Qty: {config.QUANTITY} ({config.MAX_LOTS} lot × {config.NIFTY_LOT_SIZE}), "
+              f"Option: ₹{option_price:.2f}, Cost: ₹{cost:.0f}")
+        return config.QUANTITY
     
+    def _round_to_tick(self, price: float, tick_size: float = 0.05) -> float:
+        """Round price to valid tick size for NFO options"""
+        return round(round(price / tick_size) * tick_size, 2)
+
     def place_option_order(self, strike: int, option_type: str, 
-                          order_type: str = "MARKET", quantity: int = 150) -> Optional[str]:
+                          order_type: str = "LIMIT", quantity: int = None) -> Optional[str]:
         """
-        Place an option order
-        order_type: MARKET or LIMIT
+        Place an option BUY order using LIMIT with a 2% buffer above LTP
+        to simulate market-like instant fill (Zerodha blocks raw MARKET via API).
         Returns: order_id if successful, None otherwise
         """
         try:
+            quantity = quantity or config.QUANTITY  # Always use config unless explicitly overridden
             if not self.kite:
                 print(f"[SIMULATION] Would place {option_type} order for strike {strike}, qty: {quantity}")
                 return f"SIM_{datetime.now().timestamp()}"
             
             expiry = self.get_nearest_expiry()
             symbol = self.get_option_symbol(strike, option_type, expiry)
+            
+            # Get LTP and set limit price 2% above for guaranteed fill
+            ltp = self.get_option_ltp(symbol)
+            if not ltp or ltp <= 0:
+                print(f"❌ Cannot get LTP for {symbol}, aborting order")
+                return None
+            
+            limit_price = self._round_to_tick(ltp * 1.02)  # 2% buffer above LTP
+            print(f"📋 LIMIT BUY: LTP=₹{ltp:.2f}, Limit=₹{limit_price:.2f} (+2% buffer)")
             
             order_id = self.kite.place_order(
                 variety=self.kite.VARIETY_REGULAR,
@@ -221,10 +228,11 @@ class KiteBroker:
                 transaction_type=self.kite.TRANSACTION_TYPE_BUY,
                 quantity=quantity,
                 product=self.kite.PRODUCT_MIS,  # Intraday
-                order_type=self.kite.ORDER_TYPE_MARKET,
+                order_type=self.kite.ORDER_TYPE_LIMIT,
+                price=limit_price,
             )
             
-            print(f"Order placed successfully. Order ID: {order_id}")
+            print(f"✅ Order placed successfully. Order ID: {order_id}")
             return order_id
             
         except Exception as e:
@@ -243,7 +251,7 @@ class KiteBroker:
                     "order_id": order_id,
                     "status": "COMPLETE",
                     "average_price": 100.0,
-                    "filled_quantity": 150
+                    "filled_quantity": config.QUANTITY
                 }
             
             order_history = None
@@ -294,7 +302,7 @@ class KiteBroker:
             print(f"Error verifying order fill: {e}")
             return None
     
-    def place_option_order_verified(self, strike: int, option_type: str, quantity: int = 150) -> Optional[Dict]:
+    def place_option_order_verified(self, strike: int, option_type: str, quantity: int = None) -> Optional[Dict]:
         """
         Place order and verify actual fill price
         Returns: dict with order_id, average_price, filled_quantity, status
@@ -316,7 +324,7 @@ class KiteBroker:
                 print(f"⚠️ Price moved {diff_pct:.2f}% - using latest LTP: ₹{ltp_fresh}")
         
         # Place order
-        order_id = self.place_option_order(strike, option_type, quantity=quantity)
+        order_id = self.place_option_order(strike, option_type, quantity=quantity or config.QUANTITY)
         
         if not order_id:
             return None
@@ -333,19 +341,32 @@ class KiteBroker:
         
         return result
     
-    def exit_position(self, strike: int, option_type: str, quantity: int = 150) -> Optional[str]:
+    def exit_position(self, strike: int, option_type: str, quantity: int = None) -> Optional[str]:
         """
-        Exit an option position.
+        Exit an option position using LIMIT order 2% below LTP
+        to simulate market-like instant fill.
         Returns order_id if order was placed, None on failure.
         NOTE: Use exit_position_verified() to confirm the fill.
         """
         try:
+            quantity = quantity or config.QUANTITY  # Always use config unless explicitly overridden
             if not self.kite:
                 print(f"[SIMULATION] Would exit {option_type} position for strike {strike}, qty: {quantity}")
                 return f"SIM_EXIT_{datetime.now().timestamp()}"
             
             expiry = self.get_nearest_expiry()
             symbol = self.get_option_symbol(strike, option_type, expiry)
+            
+            # Get LTP and set limit price 2% below for guaranteed fill
+            ltp = self.get_option_ltp(symbol)
+            if not ltp or ltp <= 0:
+                print(f"❌ Cannot get LTP for {symbol} to exit, attempting with ₹0.05 (minimum)")
+                limit_price = 0.05
+            else:
+                limit_price = self._round_to_tick(ltp * 0.98)  # 2% buffer below LTP
+                limit_price = max(limit_price, 0.05)  # Ensure minimum valid price
+            
+            print(f"📋 LIMIT SELL: LTP=₹{ltp:.2f}, Limit=₹{limit_price:.2f} (-2% buffer)")
             
             order_id = self.kite.place_order(
                 variety=self.kite.VARIETY_REGULAR,
@@ -354,10 +375,11 @@ class KiteBroker:
                 transaction_type=self.kite.TRANSACTION_TYPE_SELL,
                 quantity=quantity,
                 product=self.kite.PRODUCT_MIS,  # Intraday
-                order_type=self.kite.ORDER_TYPE_MARKET,
+                order_type=self.kite.ORDER_TYPE_LIMIT,
+                price=limit_price,
             )
             
-            print(f"Exit order placed successfully. Order ID: {order_id}")
+            print(f"✅ Exit order placed successfully. Order ID: {order_id}")
             return order_id
             
         except Exception as e:
@@ -365,13 +387,14 @@ class KiteBroker:
             return None
 
     def exit_position_verified(self, strike: int, option_type: str,
-                               quantity: int = 150, max_attempts: int = 10) -> Optional[Dict]:
+                               quantity: int = None, max_attempts: int = 10) -> Optional[Dict]:
         """
         Place exit order and verify it was actually FILLED.
         Returns dict with status/average_price/filled_quantity, or None on failure.
         Mirrors place_option_order_verified() used for entries.
         """
         if not self.kite:
+            quantity = quantity or config.QUANTITY
             print(f"[SIMULATION] Would exit {option_type} strike {strike}, qty: {quantity}")
             return {
                 "order_id": f"SIM_EXIT_{datetime.now().timestamp()}",

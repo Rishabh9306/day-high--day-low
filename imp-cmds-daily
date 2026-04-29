@@ -1,14 +1,43 @@
-cd /home/draxxy/dayhigh-daylow && sudo systemctl stop nifty-trading-bot && .venv/bin/python get_access_token.py
+# ════════════════════════════════════════════════════════════════
+# NIFTY TRADING BOT — DAILY COMMANDS
+# Run these every morning before 9:15 AM IST
+# ════════════════════════════════════════════════════════════════
 
-sudo cp /home/draxxy/dayhigh-daylow/nifty-trading-bot.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart nifty-trading-bot
+# ━━━ OPTION A: Run everything in one go ━━━
+cd /home/draxxy/Projects/Random/dayhigh-daylow && ./daily_start.sh
 
-tail -f /home/draxxy/dayhigh-daylow/logs/bot.log
+# ━━━ OPTION B: Run steps manually ━━━
 
-sudo systemctl stop nifty-trading-bot
+# 1. Check bot status
+ps aux | grep "main.py" | grep -v grep
 
+# 2. Stop bot if running
+kill -9 $(pgrep -f "dayhigh-daylow/main.py") 2>/dev/null
 
+# 3. Generate new access token (opens browser for Kite login)
+cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python get_access_token.py
 
+# 4. Check & update IP on Kite developer console
+cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python check_ip.py
 
-sudo journalctl -u nifty-trading-bot -n 100
+# 5. Verify token validity
+cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python -c "
+import config
+from kiteconnect import KiteConnect
+try:
+    kite = KiteConnect(api_key=config.API_KEY)
+    kite.set_access_token(config.ACCESS_TOKEN)
+    profile = kite.profile()
+    print('✅ SUCCESS! Token valid. Connected as:', profile['user_name'])
+except Exception as e:
+    print('❌ FAILED:', e)
+"
 
-sudo journalctl -u nifty-trading-bot --since today
+# 6. Start bot (background with logging)
+cd /home/draxxy/Projects/Random/dayhigh-daylow && nohup .venv/bin/python -u main.py >> logs/bot.log 2>> logs/bot-error.log &
+
+# 7. Watch live logs
+tail -f /home/draxxy/Projects/Random/dayhigh-daylow/logs/bot.log
+
+# 8. Stop bot
+kill $(pgrep -f "dayhigh-daylow/main.py")

@@ -11,8 +11,8 @@ import threading
 import time
 
 # Your credentials
-API_KEY = "8b3x3vuxw5qw7mfn"
-API_SECRET = "i2xrv31cmmtyec4cef3j3r41l1olac3k"
+API_KEY = "797dg0cofueodoar"
+API_SECRET = "hvs5rmo2mo8rwm58votgjwqjryne8fy6"
 
 # Global variable to store request token
 request_token = None
@@ -188,7 +188,7 @@ ACCESS_TOKEN={access_token}
 
 # Trading Configuration
 CAPITAL_PER_TRADE=50000
-MAX_TRADES_PER_DAY=2
+MAX_TRADES_PER_DAY=1
 """
     
     with open('.env', 'w') as f:

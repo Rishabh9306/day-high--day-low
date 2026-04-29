@@ -71,7 +71,7 @@ ACCESS_TOKEN=your_access_token_here
 
 # Trading Configuration
 CAPITAL_PER_TRADE=50000
-MAX_TRADES_PER_DAY=2
+MAX_TRADES_PER_DAY=1
 ```
 
 ### 4. Getting Kite Connect Credentials
@@ -118,7 +118,7 @@ Edit `config.py` to customize:
 - **STOP_LOSS_PERCENT**: Default 20%
 - **TARGET_PERCENT**: Default 40%
 - **CAPITAL_PER_TRADE**: Capital allocated per trade
-- **MAX_TRADES_PER_DAY**: Maximum trades per day (default: 2)
+- **MAX_TRADES_PER_DAY**: Maximum trades per day (default: 1)
 - **CHECK_INTERVAL_SECONDS**: How often to check prices (default: 30s)
 - **TRADING_START_HOUR/MINUTE**: Market open time (9:15 AM)
 - **TRADING_END_HOUR/MINUTE**: Market close time (3:15 PM)
