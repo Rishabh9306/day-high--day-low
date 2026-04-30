@@ -37,7 +37,7 @@ INDIA_VIX_TOKEN = 264969  # India VIX instrument token for Zerodha
 # SL NEVER moves down. 'EXIT' as lock means force-exit the trade immediately.
 # Format: (profit_threshold_%, sl_lock_% or 'EXIT')
 # MUST be sorted ascending by threshold.
-ENABLE_TRAILING_SL = True
+ENABLE_TRAILING_SL = os.getenv('ENABLE_TRAILING_SL', 'true').lower() == 'true'
 TRAILING_SL_STEPS = [
     (9,  0),        # At +9% profit  → move SL to break-even (0%)
     (18, 6),        # At +18% profit → lock in +6%
