@@ -42,11 +42,28 @@ class KiteBroker:
             print(f"Error initializing Kite: {e}")
             self.kite = None
     
-    def get_atm_strike(self, spot_price: float) -> int:
+    def get_atm_strike(self, spot_price: float, option_type: str = None) -> int:
         """
-        Get ATM strike price (rounded to nearest 50)
+        Get strike price based on spot price and STRIKE_OFFSET from config.
+        
+        If STRIKE_OFFSET = 0   → ATM (nearest 50)
+        If STRIKE_OFFSET = 1000 → OTM by 1000 pts
+            CE: ATM + 1000 (higher strike = cheaper call = more aggressive)
+            PE: ATM - 1000 (lower strike = cheaper put = more aggressive)
         """
-        return round(spot_price / 50) * 50
+        atm = round(spot_price / 50) * 50
+        
+        if config.STRIKE_OFFSET and option_type:
+            if option_type == "CE":
+                strike = atm + config.STRIKE_OFFSET
+            else:  # PE
+                strike = atm - config.STRIKE_OFFSET
+            # Round to nearest 50 (in case offset isn't a multiple of 50)
+            strike = round(strike / 50) * 50
+            print(f"🎯 Strike: ATM {atm} → OTM {strike} ({option_type}, offset: {config.STRIKE_OFFSET})")
+            return strike
+        
+        return atm
     
     def get_instruments(self, exchange: str = "NFO") -> List[Dict]:
         """

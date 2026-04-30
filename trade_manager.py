@@ -175,10 +175,10 @@ class TradeManager:
         print(f"ENTERING {option_type} TRADE")
         print(f"{'='*60}")
         
-        # Get ATM strike
-        self.strike = self.broker.get_atm_strike(spot_price)
+        # Get strike (ATM or OTM based on STRIKE_OFFSET in .env)
+        self.strike = self.broker.get_atm_strike(spot_price, option_type)
         print(f"Spot Price: {spot_price}")
-        print(f"ATM Strike: {self.strike}")
+        print(f"Strike: {self.strike} ({'OTM' if config.STRIKE_OFFSET else 'ATM'})")
         
         # Get option price
         expiry = self.broker.get_nearest_expiry()

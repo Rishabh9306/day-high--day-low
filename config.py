@@ -28,8 +28,8 @@ STOP_LOSS_PERCENT = 10  # 10% from entry
 TARGET_PERCENT = 20     # 20% from entry
 
 # VIX-based calculation (used only if USE_VIX_BASED_TARGETS = True)
-VIX_SL_MULTIPLIER = 1.0   # SL = VIX * 1.0 (i.e., if VIX = 11.3%, SL = 11.3%)
-VIX_TARGET_MULTIPLIER = 3.0  # Target = VIX * 3.0 (i.e., if VIX = 11.3%, Target = 33.9%)
+VIX_SL_MULTIPLIER = 1.0   # SL = VIX * 1.0 (i.e., if VIX = 18.4%, SL = 18.4%)
+VIX_TARGET_MULTIPLIER = 4.0  # Target = VIX * 4.0 (i.e., if VIX = 18.4%, Target = 73.6%)
 INDIA_VIX_TOKEN = 264969  # India VIX instrument token for Zerodha
 
 # Trailing Stop Loss Configuration
@@ -39,11 +39,11 @@ INDIA_VIX_TOKEN = 264969  # India VIX instrument token for Zerodha
 # MUST be sorted ascending by threshold.
 ENABLE_TRAILING_SL = os.getenv('ENABLE_TRAILING_SL', 'true').lower() == 'true'
 TRAILING_SL_STEPS = [
-    (9,  0),        # At +9% profit  → move SL to break-even (0%)
-    (18, 6),        # At +18% profit → lock in +6%
-    (30, 15),       # At +30% profit → lock in +15%
-    (42, 25),       # At +42% profit → lock in +25%
-    (54, 'EXIT'),   # At +54% profit → EXIT immediately (hard target)
+    (25, 0),       # At +25% profit  → move SL to break-even (0%)
+    (35, 15),      # At +35% profit → lock in +15%
+    (50, 25),      # At +50% profit → lock in +25%
+    (65, 40),      # At +65% profit → lock in +40%
+    (80, 'EXIT'),  # At +80% profit → EXIT immediately (hard target)
 ]
 
 # ══════════════════════════════════════════════════════════════════════
@@ -53,6 +53,14 @@ TRAILING_SL_STEPS = [
 NIFTY_LOT_SIZE = 65                                          # Nifty lot size (exchange-defined)
 MAX_LOTS = int(os.getenv('MAX_LOTS', 1))                     # Max lots per trade — DEFAULT 1
 QUANTITY = NIFTY_LOT_SIZE * MAX_LOTS                         # Final order quantity — DO NOT OVERRIDE
+# ══════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════
+# STRIKE OFFSET — OTM AGGRESSIVENESS
+# 0    = ATM (At The Money) — spot 24000 → strike 24000
+# 1000 = 1000 pts OTM      — spot 24000 → CE 25000 / PE 23000
+# ══════════════════════════════════════════════════════════════════════
+STRIKE_OFFSET = int(os.getenv('STRIKE_OFFSET', 0))
 # ══════════════════════════════════════════════════════════════════════
 
 # Trading Configuration
