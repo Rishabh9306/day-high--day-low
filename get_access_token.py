@@ -178,23 +178,39 @@ try:
     print("="*70)
     print()
     
-    # Update .env file
+    # Update .env file — ONLY replace the ACCESS_TOKEN line, preserve everything else
     print("💾 Updating .env file...")
     
-    env_content = f"""# Kite Connect API Credentials
-API_KEY={API_KEY}
-API_SECRET={API_SECRET}
-ACCESS_TOKEN={access_token}
-
-# Trading Configuration
-CAPITAL_PER_TRADE=50000
-MAX_TRADES_PER_DAY=1
-"""
-    
-    with open('.env', 'w') as f:
-        f.write(env_content)
-    
-    print("✅ .env file updated successfully!")
+    env_path = '.env'
+    try:
+        with open(env_path, 'r') as f:
+            lines = f.readlines()
+        
+        token_found = False
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith('ACCESS_TOKEN='):
+                new_lines.append(f'ACCESS_TOKEN={access_token}\n')
+                token_found = True
+            else:
+                new_lines.append(line)
+        
+        # If ACCESS_TOKEN line didn't exist, add it after API_SECRET
+        if not token_found:
+            final_lines = []
+            for line in new_lines:
+                final_lines.append(line)
+                if line.strip().startswith('API_SECRET='):
+                    final_lines.append(f'ACCESS_TOKEN={access_token}\n')
+            new_lines = final_lines
+        
+        with open(env_path, 'w') as f:
+            f.writelines(new_lines)
+        
+        print("✅ .env file updated (ACCESS_TOKEN only — all other settings preserved)")
+    except Exception as env_err:
+        print(f"⚠️  Could not update .env: {env_err}")
+        print(f"   Manually set ACCESS_TOKEN={access_token} in your .env file")
     print()
     print("="*70)
     print("🎉 SETUP COMPLETE!")
