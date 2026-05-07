@@ -38,6 +38,7 @@ INDIA_VIX_TOKEN = 264969  # India VIX instrument token for Zerodha
 # Format: (profit_threshold_%, sl_lock_% or 'EXIT')
 # MUST be sorted ascending by threshold.
 ENABLE_TRAILING_SL = os.getenv('ENABLE_TRAILING_SL', 'true').lower() == 'true'
+'''
 TRAILING_SL_STEPS = [
     (25, 0),       # At +25% profit  → move SL to break-even (0%)
     (35, 15),      # At +35% profit → lock in +15%
@@ -45,7 +46,15 @@ TRAILING_SL_STEPS = [
     (65, 40),      # At +65% profit → lock in +40%
     (80, 'EXIT'),  # At +80% profit → EXIT immediately (hard target)
 ]
-
+'''
+TRAILING_SL_STEPS = [
+    (9, 0),     # +9% → Break-even
+    (18, 6),    # +18% → Lock +6%
+    (30, 15),   # +30% → Lock +15%
+    (42, 25),   # +42% → Lock +25%
+    (54, 40),   # +54% → Lock +40%
+    (65, 'EXIT')  # +65% → Exit
+]
 # ══════════════════════════════════════════════════════════════════════
 # LOT SIZE CONFIGURATION — SINGLE SOURCE OF TRUTH
 # Change ONLY here. Every order in the system uses these values.

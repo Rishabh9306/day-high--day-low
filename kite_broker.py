@@ -200,14 +200,28 @@ class KiteBroker:
     
     def calculate_quantity(self, option_price: float, capital: float) -> int:
         """
-        Returns the fixed quantity from config.QUANTITY.
-        LOT SIZE IS CONTROLLED EXCLUSIVELY BY config.py (NIFTY_LOT_SIZE × MAX_LOTS).
-        No local calculation — change config.MAX_LOTS or .env MAX_LOTS to adjust.
+        Calculate lot quantity based on available capital and current option price.
+        MAX_LOTS from .env is the hard ceiling — bot will never exceed it.
+        Within that ceiling, it uses as many lots as capital allows.
         """
-        cost = option_price * config.QUANTITY if option_price else 0
-        print(f"💰 Qty: {config.QUANTITY} ({config.MAX_LOTS} lot × {config.NIFTY_LOT_SIZE}), "
-              f"Option: ₹{option_price:.2f}, Cost: ₹{cost:.0f}")
-        return config.QUANTITY
+        lot_size = config.NIFTY_LOT_SIZE
+        max_lots = config.MAX_LOTS
+
+        if not option_price or option_price <= 0:
+            qty = lot_size * max_lots
+            print(f"💰 Qty: {qty} ({max_lots} lot × {lot_size}), Option price unavailable")
+            return qty
+
+        cost_per_lot = option_price * lot_size
+        affordable_lots = int(capital / cost_per_lot)
+        lots = max(1, min(affordable_lots, max_lots))  # At least 1, at most MAX_LOTS
+        qty = lots * lot_size
+        total_cost = option_price * qty
+
+        print(f"💰 Capital: ₹{capital:.0f}, Option: ₹{option_price:.2f}, "
+              f"Cost/lot: ₹{cost_per_lot:.0f}, Lots: {lots}/{max_lots}, "
+              f"Qty: {qty}, Total: ₹{total_cost:.0f}")
+        return qty
     
     def _round_to_tick(self, price: float, tick_size: float = 0.05) -> float:
         """Round price to valid tick size for NFO options"""
