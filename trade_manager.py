@@ -39,6 +39,10 @@ class TradeManager:
         self.high_breakout_triggered = False
         self.low_breakout_triggered = False
         
+        # Rejection circuit breaker — stops order spam after N consecutive rejections
+        self.consecutive_rejections = 0
+        self.MAX_REJECTIONS = 3  # Stop trying after 3 rejections
+        
         # Aggressive monitoring timers (reconcile_position now runs EVERY loop - no timer needed)
         self.last_order_check_time = None
         self.order_check_interval = config.ORDER_BOOK_CHECK_INTERVAL
@@ -240,11 +244,8 @@ class TradeManager:
                 diff = actual_fill_price - option_price
                 print(f"⚠️  Slippage: ₹{diff:+.2f}")
             
-            # Mark breakout as triggered
-            if option_type == "CE":
-                self.high_breakout_triggered = True
-            else:
-                self.low_breakout_triggered = True
+            # Reset rejection counter on successful fill
+            self.consecutive_rejections = 0
             
             print(f"Entry Price: {self.entry_price}")
             print(f"Stop Loss: {self.stop_loss:.2f} (-{sl_percent}%)")
@@ -269,12 +270,27 @@ class TradeManager:
             notifier.notify_entry(option_type, self.strike, actual_fill_price,
                                   self.stop_loss, self.target, self.quantity)
         elif order_result:
-            print(f"❌ Order {order_result['status']}: {order_result.get('error', 'Unknown error')}")
-            notifier.notify_error(f"Order {order_result['status']}: {order_result.get('error', '')}")
+            self.consecutive_rejections += 1
+            error_msg = order_result.get('error', 'Unknown error')
+            print(f"❌ Order {order_result['status']}: {error_msg}")
+            print(f"   Rejection #{self.consecutive_rejections}/{self.MAX_REJECTIONS}")
+            if self.consecutive_rejections >= self.MAX_REJECTIONS:
+                msg = (f"🚨 CIRCUIT BREAKER: {self.MAX_REJECTIONS} consecutive rejections. "
+                       f"Stopping order attempts for today.\nLast error: {error_msg}")
+                print(f"\n🚨 {msg}")
+                notifier.notify_error(msg)
+            else:
+                notifier.notify_error(f"Order {order_result['status']}: {error_msg}")
             return
         else:
-            print(f"❌ Order placement failed")
-            notifier.notify_error("Order placement failed — no order_id returned")
+            self.consecutive_rejections += 1
+            print(f"❌ Order placement failed (rejection #{self.consecutive_rejections}/{self.MAX_REJECTIONS})")
+            if self.consecutive_rejections >= self.MAX_REJECTIONS:
+                msg = f"🚨 CIRCUIT BREAKER: {self.MAX_REJECTIONS} consecutive failures. Stopping."
+                print(f"\n🚨 {msg}")
+                notifier.notify_error(msg)
+            else:
+                notifier.notify_error("Order placement failed — no order_id returned")
             return
     
     def exit_trade(self, reason: str, current_price: float):
@@ -532,10 +548,17 @@ class TradeManager:
         if not current_price:
             return
         
+        # Circuit breaker — stop if too many rejections
+        if self.consecutive_rejections >= self.MAX_REJECTIONS:
+            return
+        
         # Check for high breakout (CE entry)
         if not self.high_breakout_triggered and current_price > self.prev_high:
             print(f"\n🚀 HIGH BREAKOUT DETECTED!")
             print(f"Current Price: {current_price} > Previous High: {self.prev_high}")
+            # Set flag IMMEDIATELY on detection — prevents retry loop if order fails
+            self.high_breakout_triggered = True
+            self.save_state()
             notifier.notify_breakout("HIGH", current_price, self.prev_high)
             self.enter_trade("CE", current_price)
             return
@@ -544,6 +567,9 @@ class TradeManager:
         if not self.low_breakout_triggered and current_price < self.prev_low:
             print(f"\n📉 LOW BREAKOUT DETECTED!")
             print(f"Current Price: {current_price} < Previous Low: {self.prev_low}")
+            # Set flag IMMEDIATELY on detection — prevents retry loop if order fails
+            self.low_breakout_triggered = True
+            self.save_state()
             notifier.notify_breakout("LOW", current_price, self.prev_low)
             self.enter_trade("PE", current_price)
             return
