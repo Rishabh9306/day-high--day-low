@@ -235,7 +235,9 @@ class KiteBroker:
         Returns: order_id if successful, None otherwise
         """
         try:
-            quantity = quantity or config.QUANTITY  # Always use config unless explicitly overridden
+            if not quantity:
+                print("❌ No quantity specified — aborting order")
+                return None
             if not self.kite:
                 print(f"[SIMULATION] Would place {option_type} order for strike {strike}, qty: {quantity}")
                 return f"SIM_{datetime.now().timestamp()}"
@@ -282,7 +284,7 @@ class KiteBroker:
                     "order_id": order_id,
                     "status": "COMPLETE",
                     "average_price": 100.0,
-                    "filled_quantity": config.QUANTITY
+                    "filled_quantity": config.NIFTY_LOT_SIZE  # Simulation default
                 }
             
             order_history = None
@@ -355,7 +357,7 @@ class KiteBroker:
                 print(f"⚠️ Price moved {diff_pct:.2f}% - using latest LTP: ₹{ltp_fresh}")
         
         # Place order
-        order_id = self.place_option_order(strike, option_type, quantity=quantity or config.QUANTITY)
+        order_id = self.place_option_order(strike, option_type, quantity=quantity)
         
         if not order_id:
             return None
@@ -380,7 +382,9 @@ class KiteBroker:
         NOTE: Use exit_position_verified() to confirm the fill.
         """
         try:
-            quantity = quantity or config.QUANTITY  # Always use config unless explicitly overridden
+            if not quantity:
+                print("❌ No quantity specified — aborting exit")
+                return None
             if not self.kite:
                 print(f"[SIMULATION] Would exit {option_type} position for strike {strike}, qty: {quantity}")
                 return f"SIM_EXIT_{datetime.now().timestamp()}"
@@ -425,7 +429,9 @@ class KiteBroker:
         Mirrors place_option_order_verified() used for entries.
         """
         if not self.kite:
-            quantity = quantity or config.QUANTITY
+            if not quantity:
+                print("❌ No quantity specified — aborting exit")
+                return None
             print(f"[SIMULATION] Would exit {option_type} strike {strike}, qty: {quantity}")
             return {
                 "order_id": f"SIM_EXIT_{datetime.now().timestamp()}",

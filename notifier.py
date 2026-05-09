@@ -68,7 +68,7 @@ def notify_trailing_exit(profit_pct: float, exit_price: float):
     """Trailing SL triggered hard exit at final step"""
     send_telegram(
         f"🎯 <b>TSL HARD EXIT — +{profit_pct:.1f}%</b>\n\n"
-        f"Price crossed +54% threshold\n"
+        f"Price crossed final TSL threshold\n"
         f"Exiting at ₹{exit_price:.2f}"
     )
 

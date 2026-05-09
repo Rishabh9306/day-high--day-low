@@ -82,6 +82,8 @@ class TradeManager:
                         # TSL state — critical for restart persistence
                         self.trailing_sl_active = state.get('trailing_sl_active', False)
                         self.highest_price_seen = state.get('highest_price_seen', 0.0)
+                        # Circuit breaker — persists rejection count across restarts
+                        self.consecutive_rejections = state.get('consecutive_rejections', 0)
                         print("Loaded existing trade state")
         except Exception as e:
             print(f"Error loading state: {e}")
@@ -106,6 +108,8 @@ class TradeManager:
                 # TSL state — must persist for restart safety
                 'trailing_sl_active': self.trailing_sl_active,
                 'highest_price_seen': self.highest_price_seen,
+                # Circuit breaker — survives crashes
+                'consecutive_rejections': self.consecutive_rejections,
             }
             
             with open('trade_state.json', 'w') as f:

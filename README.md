@@ -1,230 +1,134 @@
 # Nifty 50 Breakout Trading Bot
 
-An automated intraday trading system that trades Nifty 50 options based on previous day's high/low breakouts.
+Automated options trading bot for NSE Nifty 50 using Zerodha Kite Connect API. Trades breakouts of the previous day's high/low with dynamic risk management.
 
-## Strategy Overview
+## Strategy
 
-**Objective**: Trade breakouts based on the previous day's range
+- **Entry**: Buy CE when Nifty breaks above previous day's high, PE when it breaks below previous day's low
+- **Risk**: VIX-based dynamic Stop Loss and Target (SL = VIX × 1.0, Target = VIX × 4.0)
+- **Exit**: Trailing stop-loss with step-based ratchet locks, auto-squareoff at 15:15 IST
+- **Limit**: 1 trade per day, ATM weekly expiry options
 
-### Entry Conditions
-- **Buy CE (Call Option)**: When current price crosses **above** yesterday's high
-- **Buy PE (Put Option)**: When current price crosses **below** yesterday's low
+## Architecture
 
-### Exit Conditions
-- **Stop Loss**: Dynamic (VIX-based) or Fixed percentage
-- **Target**: Dynamic (VIX-based) or Fixed percentage
-- **EOD Square Off**: All positions squared off at 3:15 PM
-
-#### Risk Management Modes
-
-**VIX-Based (Default):**
-- Stop Loss = India VIX × 1.0 (e.g., VIX 11.3% → SL 11.3%)
-- Target = India VIX × 3.0 (e.g., VIX 11.3% → Target 33.9%)
-- Automatically adapts to market volatility
-- See [VIX_TRADING.md](VIX_TRADING.md) for details
-
-**Fixed Percentages:**
-- Stop Loss: 10% from entry
-- Target: 20% from entry
-- Set `USE_VIX_BASED_TARGETS = False` in `config.py`
-
-### Key Features
-- ✅ Intraday trading only (MIS)
-- ✅ ATM (At The Money) options trading
-- ✅ Uses Kite Connect for order placement
-- ✅ Uses Yahoo Finance for real-time prices
-- ✅ Automatic position monitoring
-- ✅ Risk management with SL and Target
-- ✅ Trade logging and history
-- ✅ Graceful error handling
-
-## Setup Instructions
-
-### 1. Prerequisites
-- Python 3.8 or higher
-- Zerodha Kite Connect account
-- Active internet connection
-
-### 2. Installation
-
-```bash
-# Clone or navigate to the project directory
-cd dayhigh-daylow
-
-# Install required packages
-pip install -r requirements.txt
+```
+daily_start.sh          # Automated startup (TOTP login → verify → launch)
+├── auto_login.py       # Headless Zerodha login via TOTP
+├── main.py             # Main loop (heartbeat, monitoring, EOD)
+│   ├── trade_manager.py  # Entry/exit logic, TSL, state persistence
+│   ├── kite_broker.py    # Order placement, verification, reconciliation
+│   ├── data_fetcher.py   # Zerodha API: prices, VIX, historical data
+│   └── notifier.py       # Telegram alerts (fire-and-forget)
+└── config.py           # All settings from .env
+watchdog.py             # Heartbeat monitor (detects silent hangs)
 ```
 
-### 3. Configuration
+## Quick Setup
 
-1. **Copy the example environment file**:
 ```bash
+# Clone
+git clone https://github.com/Rishabh9306/day-high--day-low.git
+cd day-high--day-low
+
+# Python environment
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+
+# Configuration
 cp .env.example .env
+# Edit .env with your Kite API credentials
 ```
 
-2. **Edit `.env` file with your credentials**:
-```env
-# Kite Connect API Credentials
-API_KEY=your_api_key_here
-API_SECRET=your_api_secret_here
-ACCESS_TOKEN=your_access_token_here
+## Configuration (.env)
 
-# Trading Configuration
-CAPITAL_PER_TRADE=50000
-MAX_TRADES_PER_DAY=1
-```
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `API_KEY` | Kite Connect API key | `abc123` |
+| `API_SECRET` | Kite Connect API secret | `xyz789` |
+| `CAPITAL_PER_TRADE` | Capital allocated per trade (₹) | `24000` |
+| `MAX_LOTS` | Maximum lots per trade | `2` |
+| `STRIKE_OFFSET` | OTM offset (0 = ATM) | `0` |
+| `ENABLE_TRAILING_SL` | Enable trailing stop-loss | `true` |
+| `KITE_USER_ID` | Zerodha client ID | `AB1234` |
+| `KITE_PASSWORD` | Zerodha password | `pass` |
+| `TOTP_SECRET` | TOTP seed for auto-login | `BASE32KEY` |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional) | `123:ABC` |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID (optional) | `12345` |
 
-### 4. Getting Kite Connect Credentials
+## Auto-Login (TOTP)
 
-1. **Sign up for Kite Connect**: https://kite.trade/
-2. **Create an app** to get API Key and API Secret
-3. **Generate Access Token**:
-   - You need to generate access token daily OR
-   - Implement the login flow (see Kite Connect documentation)
-
-### 5. Running the Bot
+No manual browser login needed. The bot generates access tokens automatically:
 
 ```bash
-# Test individual components first
-python data_fetcher.py    # Test data fetching
-python kite_broker.py     # Test broker connection
-python trade_manager.py   # Test trade logic
+# Setup: Enable External TOTP in Zerodha
+# Kite → My Profile → Password & Security → External TOTP
+# Save the TOTP secret key to .env as TOTP_SECRET
 
-# Run the main bot
-python main.py
+# Test auto-login
+.venv/bin/python auto_login.py
 ```
 
-## File Structure
+## Running
 
-```
-dayhigh-daylow/
-├── main.py                 # Main trading bot entry point
-├── config.py              # Configuration settings
-├── data_fetcher.py        # Yahoo Finance data fetching
-├── kite_broker.py         # Kite Connect broker interface
-├── trade_manager.py       # Trade logic and position management
-├── requirements.txt       # Python dependencies
-├── .env                   # Environment variables (create this)
-├── .env.example          # Example environment file
-├── README.md             # This file
-├── trade_state.json      # Trade state (auto-generated)
-└── trade_history.json    # Trade history log (auto-generated)
+### Manual start
+```bash
+./daily_start.sh
 ```
 
-## Configuration Parameters
+### Fully automated (cron)
+```bash
+crontab -e
 
-Edit `config.py` to customize:
+# Daily startup at 8:55 AM (Mon-Fri)
+55 8 * * 1-5 cd /path/to/bot && /bin/bash daily_start.sh >> logs/startup.log 2>&1
 
-- **STOP_LOSS_PERCENT**: Default 20%
-- **TARGET_PERCENT**: Default 40%
-- **CAPITAL_PER_TRADE**: Capital allocated per trade
-- **MAX_TRADES_PER_DAY**: Maximum trades per day (default: 1)
-- **CHECK_INTERVAL_SECONDS**: How often to check prices (default: 30s)
-- **TRADING_START_HOUR/MINUTE**: Market open time (9:15 AM)
-- **TRADING_END_HOUR/MINUTE**: Market close time (3:15 PM)
-
-## How It Works
-
-1. **Pre-Market** (Before 9:15 AM):
-   - Fetches previous day's high and low from Yahoo Finance
-   - Initializes trading parameters
-
-2. **During Market Hours** (9:15 AM - 3:15 PM):
-   - Monitors Nifty 50 current price every 30 seconds
-   - Detects breakout above previous high → Enters CE (Call)
-   - Detects breakout below previous low → Enters PE (Put)
-   - Monitors positions for Stop Loss or Target hit
-   - Maximum 2 trades per day (1 CE + 1 PE)
-
-3. **End of Day** (3:15 PM):
-   - Automatically squares off all open positions
-   - Saves trade history
+# Watchdog every 5 min during market hours
+*/5 9-15 * * 1-5 cd /path/to/bot && .venv/bin/python watchdog.py >> logs/watchdog.log 2>&1
+```
 
 ## Safety Features
 
-- ✅ Only trades during market hours (9:15 AM - 3:15 PM)
-- ✅ Automatic position square-off at 3:15 PM
-- ✅ Maximum trades per day limit
-- ✅ Stop loss protection (20%)
-- ✅ State persistence (recovers from crashes)
-- ✅ Comprehensive logging
-- ✅ Simulation mode if API credentials not configured
+| Feature | Description |
+|---------|-------------|
+| **Circuit Breaker** | Stops after 3 consecutive order rejections |
+| **Breakout Flag** | Set on detection (not fill) — prevents retry loops |
+| **PID Lock** | Only one bot instance can run at a time |
+| **Heartbeat** | Main loop writes `.heartbeat` every iteration |
+| **Watchdog** | Detects hung processes, auto-restarts, Telegram alert |
+| **flock Guard** | Prevents duplicate startup scripts |
+| **Holiday Calendar** | NSE 2026 holidays — skips non-trading days |
+| **Login Timeout** | 30s timeout on auto-login prevents hangs |
+| **Log Rotation** | Rotates at 5MB, deletes after 7 days |
+| **Position Reconciliation** | Verifies position with Zerodha every loop |
+| **EOD Square-off** | Auto-exits all positions at 15:15 IST |
 
-## Monitoring and Logs
+## VPS Deployment
 
-### Trade State
-- **trade_state.json**: Current trade state (positions, SL, target)
+Recommended: AWS Lightsail Mumbai (ap-south-1), 1GB RAM, 1 vCPU.
 
-### Trade History
-- **trade_history.json**: Complete history of all trades with entry/exit details
+1. Clone repo on VPS
+2. Setup `.venv` and install requirements
+3. Copy `.env` via SCP
+4. Whitelist VPS static IP on [Kite Developer Console](https://developers.kite.trade)
+5. Setup cron jobs (above)
+6. Verify: `./daily_start.sh`
 
-### Console Output
-The bot provides real-time status updates:
-- Current time and market status
-- Previous day high/low
-- Current Nifty price
-- Active positions
-- Stop loss and target levels
-- Trades taken today
+## Commands
 
-## Troubleshooting
-
-### Issue: "API credentials not configured"
-**Solution**: Make sure `.env` file exists with valid API_KEY and ACCESS_TOKEN
-
-### Issue: "Error fetching data from Yahoo Finance"
-**Solution**: Check internet connection. Yahoo Finance may have temporary issues.
-
-### Issue: "Order placement failed"
-**Solution**: 
-- Verify Kite Connect credentials
-- Check if you have sufficient margin
-- Ensure market is open
-
-### Issue: Bot not detecting breakouts
-**Solution**:
-- Check if previous day data was fetched correctly
-- Verify current price is being fetched
-- Check console logs for errors
-
-## Testing
-
-### Test Mode (Simulation)
-If you don't configure API credentials, the bot runs in simulation mode:
-- Fetches real market data
-- Simulates order placement
-- Logs all actions without real trades
-
-### Test Individual Components
 ```bash
-# Test data fetching
-python data_fetcher.py
+# Check bot status
+ps aux | grep main.py | grep -v grep
 
-# Test broker interface
-python kite_broker.py
+# Stop bot
+kill $(pgrep -f "main.py")
 
-# Test trade logic
-python trade_manager.py
+# Watch logs
+tail -f logs/bot.log
+
+# Health check
+.venv/bin/python watchdog.py
 ```
-
-## Risk Disclaimer
-
-⚠️ **IMPORTANT**: 
-- This is an automated trading system that involves real money
-- Options trading involves substantial risk and is not suitable for everyone
-- Past performance does not guarantee future results
-- Always test thoroughly in paper trading first
-- Use proper position sizing and risk management
-- Monitor the bot regularly
-- The developers are not responsible for any trading losses
-
-## Support
-
-For issues or questions:
-1. Check the console logs for error messages
-2. Review the trade_history.json for trade details
-3. Test individual components to isolate issues
 
 ## License
 
-This project is for educational purposes. Use at your own risk.
+Private — not for redistribution.
