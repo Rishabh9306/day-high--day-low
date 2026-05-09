@@ -1,45 +1,41 @@
-# Environment variables
+# ═══ Secrets (NEVER commit) ═══
 .env
 
-# Trade state and history
+# ═══ Runtime state ═══
 trade_state.json
 trade_history.json
 trading.log
+.bot.pid
+.heartbeat
+.startup.lock
 
-# Python
+# ═══ Logs ═══
+logs/
+
+# ═══ Python ═══
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
 
-# Virtual Environment
+# ═══ Virtual Environment ═══
+.venv/
 venv/
 env/
 ENV/
 
-# IDE
+# ═══ IDE ═══
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS
+# ═══ OS ═══
 .DS_Store
 Thumbs.db

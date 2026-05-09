@@ -1,8 +1,11 @@
-kiteconnect==4.2.0
-yfinance==0.2.32
-pandas==2.1.3
-numpy==1.26.2
-python-dotenv==1.0.0
-pytz==2023.3
-schedule==1.2.0
-requests==2.31.0
+# Core
+kiteconnect>=5.0.0
+python-dotenv>=1.0.0
+pytz>=2023.3
+requests>=2.31.0
+
+# Auto-login (TOTP)
+pyotp>=2.9.0
+
+# Data (used by data_fetcher)
+pandas>=2.1.0
