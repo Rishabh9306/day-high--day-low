@@ -1,9 +1,8 @@
 # ════════════════════════════════════════════════════════════════
 # NIFTY TRADING BOT — DAILY COMMANDS
-# Run these every morning before 9:15 AM IST
 # ════════════════════════════════════════════════════════════════
 
-# ━━━ OPTION A: Run everything in one go ━━━
+# ━━━ OPTION A: Fully automated (TOTP — no browser needed) ━━━
 cd /home/draxxy/Projects/Random/dayhigh-daylow && ./daily_start.sh
 
 # ━━━ OPTION B: Run steps manually ━━━
@@ -14,13 +13,13 @@ ps aux | grep "main.py" | grep -v grep
 # 2. Stop bot if running
 kill -9 $(pgrep -f "dayhigh-daylow/main.py") 2>/dev/null
 
-# 3. Generate new access token (opens browser for Kite login)
+# 3a. Auto-login (TOTP — headless, no browser)
+cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python auto_login.py
+
+# 3b. Manual login (opens browser — fallback if TOTP fails)
 cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python get_access_token.py
 
-# 4. Check & update IP on Kite developer console
-cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python check_ip.py
-
-# 5. Verify token validity
+# 4. Verify token validity
 cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python -c "
 import config
 from kiteconnect import KiteConnect
@@ -33,11 +32,15 @@ except Exception as e:
     print('❌ FAILED:', e)
 "
 
-# 6. Start bot (background with logging)
+# 5. Start bot (background with logging)
 cd /home/draxxy/Projects/Random/dayhigh-daylow && nohup .venv/bin/python -u main.py >> logs/bot.log 2>> logs/bot-error.log &
 
-# 7. Watch live logs
+# 6. Watch live logs
 tail -f /home/draxxy/Projects/Random/dayhigh-daylow/logs/bot.log
 
-# 8. Stop bot
+# 7. Stop bot
 kill $(pgrep -f "dayhigh-daylow/main.py")
+
+# ━━━ CRON JOB (for VPS — fully automated) ━━━
+# Add with: crontab -e
+# 55 8 * * 1-5 /home/draxxy/Projects/Random/dayhigh-daylow/daily_start.sh >> /home/draxxy/Projects/Random/dayhigh-daylow/logs/startup.log 2>&1

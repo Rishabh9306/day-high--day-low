@@ -2,21 +2,24 @@
 #
 # Daily Startup Script for Nifty 50 Breakout Trading Bot
 #
-# Run this every morning before market opens (before 9:15 AM IST)
+# FULLY AUTOMATED — no browser, no manual login, no TOTP entry
+# Runs entirely headless. Safe for cron jobs and VPS.
+#
 # Usage: cd /home/draxxy/Projects/Random/dayhigh-daylow && ./daily_start.sh
+# Cron:  55 8 * * 1-5 /home/draxxy/Projects/Random/dayhigh-daylow/daily_start.sh >> /home/draxxy/Projects/Random/dayhigh-daylow/logs/startup.log 2>&1
 #
 
-BOT_DIR="/home/draxxy/Projects/Random/dayhigh-daylow"
+BOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="$BOT_DIR/.venv/bin/python"
 
 echo "========================================================================"
-echo "🚀 NIFTY TRADING BOT — DAILY STARTUP"
+echo "🚀 NIFTY TRADING BOT — DAILY STARTUP (AUTOMATED)"
 echo "   $(date '+%Y-%m-%d %H:%M:%S IST')"
 echo "========================================================================"
 echo ""
 
 # ──────────────────────────────────────────────────
-# STEP 1: Check bot status
+# STEP 1: Kill any running bot instances
 # ──────────────────────────────────────────────────
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📍 STEP 1: Checking bot status..."
@@ -24,7 +27,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 BOT_PID=$(pgrep -f "python.*$BOT_DIR/main.py" 2>/dev/null)
 if [ -n "$BOT_PID" ]; then
-    echo "⚠️  Bot is currently RUNNING (PID: $BOT_PID)"
+    echo "   ⚠️  Bot is currently RUNNING (PID: $BOT_PID)"
     echo "   Stopping it before token refresh..."
     kill -9 $BOT_PID 2>/dev/null
     sleep 1
@@ -33,58 +36,38 @@ else
     echo "   ✅ Bot is not running (clean state)"
 fi
 
-# Note: Removed 'sudo systemctl stop nifty-trading-bot' — running via sudo
-# was causing log files to become root-owned, leading to permission denied errors.
+# Clean stale PID lock
+rm -f "$BOT_DIR/.bot.pid"
 echo ""
 
 # ──────────────────────────────────────────────────
-# STEP 2: Generate new access token
+# STEP 2: Auto-login via TOTP (no browser needed)
 # ──────────────────────────────────────────────────
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🔑 STEP 2: Generate new access token"
+echo "🔑 STEP 2: Auto-login (TOTP — headless)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "   Starting token generator..."
-echo "   Please login to Kite when the browser opens."
 echo ""
 
 cd "$BOT_DIR"
-$PYTHON get_access_token.py
+$PYTHON auto_login.py
 
 if [ $? -ne 0 ]; then
     echo ""
-    echo "❌ Token generation failed!"
-    echo "   Please run manually: $PYTHON get_access_token.py"
-    exit 1
+    echo "❌ Auto-login failed!"
+    echo "   Falling back to browser-based login..."
+    $PYTHON get_access_token.py
+    if [ $? -ne 0 ]; then
+        echo "❌ Both login methods failed. Exiting."
+        exit 1
+    fi
 fi
 echo ""
 
 # ──────────────────────────────────────────────────
-# STEP 3: Check and display IP for whitelisting
+# STEP 3: Verify token validity
 # ──────────────────────────────────────────────────
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🌐 STEP 3: Check IP for whitelisting"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-
-$PYTHON check_ip.py --no-browser
-echo ""
-
-read -p "   Have you updated IPs on Kite developer console? (y/n): " ip_updated
-if [ "$ip_updated" != "y" ]; then
-    echo ""
-    echo "⚠️  Please update IPs first!"
-    echo "   Open: https://developers.kite.trade"
-    echo "   Then re-run this script."
-    exit 1
-fi
-echo ""
-
-# ──────────────────────────────────────────────────
-# STEP 4: Verify token validity
-# ──────────────────────────────────────────────────
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✅ STEP 4: Verifying token validity..."
+echo "✅ STEP 3: Verifying token validity..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -107,25 +90,25 @@ else
     ERROR="${TOKEN_CHECK#FAIL:}"
     echo "   ❌ Token is INVALID: $ERROR"
     echo ""
-    echo "   Please re-run: $PYTHON get_access_token.py"
+    echo "   Please run manually: $PYTHON get_access_token.py"
     exit 1
 fi
 echo ""
 
 # ──────────────────────────────────────────────────
-# STEP 5: Start the bot
+# STEP 4: Start the bot
 # ──────────────────────────────────────────────────
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🤖 STEP 5: Starting the bot..."
+echo "🤖 STEP 4: Starting the bot..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Fix log file permissions if they got owned by root (from previous sudo runs)
+# Ensure log directory exists with correct permissions
 mkdir -p "$BOT_DIR/logs"
 for logfile in "$BOT_DIR/logs/bot.log" "$BOT_DIR/logs/bot-error.log"; do
     if [ -f "$logfile" ] && [ ! -w "$logfile" ]; then
         echo "   ⚠️  Fixing permissions on $(basename $logfile)..."
-        sudo chown $(whoami):$(whoami) "$logfile"
+        sudo chown $(whoami):$(whoami) "$logfile" 2>/dev/null
     fi
 done
 
