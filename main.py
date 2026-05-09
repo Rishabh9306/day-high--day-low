@@ -13,10 +13,16 @@ import config
 from trade_manager import TradeManager
 import notifier
 
+BOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ── Singleton Lock ──────────────────────────────────────────────────
 # Prevents multiple bot instances from running simultaneously.
 # Duplicate instances corrupt logs and can place duplicate orders.
-LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.bot.pid')
+LOCK_FILE = os.path.join(BOT_DIR, '.bot.pid')
+
+# ── Heartbeat ───────────────────────────────────────────────────────
+# Written every loop iteration. Watchdog checks this to detect silent hangs.
+HEARTBEAT_FILE = os.path.join(BOT_DIR, '.heartbeat')
 
 def acquire_lock():
     """Ensure only one bot instance runs at a time using a PID lock file."""
@@ -39,10 +45,19 @@ def acquire_lock():
         f.write(str(os.getpid()))
 
 def release_lock():
-    """Remove the PID lock file on clean exit."""
+    """Remove the PID lock file and heartbeat on clean exit."""
+    for f in (LOCK_FILE, HEARTBEAT_FILE):
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+        except OSError:
+            pass
+
+def write_heartbeat():
+    """Write current timestamp to heartbeat file. Called every loop iteration."""
     try:
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
+        with open(HEARTBEAT_FILE, 'w') as f:
+            f.write(str(time.time()))
     except OSError:
         pass
 
@@ -191,6 +206,9 @@ class TradingBot:
                 # Monitor positions and check for trades
                 if self.day_initialized:
                     self.trade_manager.monitor_positions()
+                
+                # Write heartbeat — watchdog uses this to detect silent hangs
+                write_heartbeat()
                 
                 # Dynamic sleep interval based on position
                 if self.trade_manager.current_position:

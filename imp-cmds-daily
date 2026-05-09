@@ -41,6 +41,14 @@ tail -f /home/draxxy/Projects/Random/dayhigh-daylow/logs/bot.log
 # 7. Stop bot
 kill $(pgrep -f "dayhigh-daylow/main.py")
 
-# ━━━ CRON JOB (for VPS — fully automated) ━━━
+# 8. Run watchdog (one-shot health check)
+cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python watchdog.py
+
+# ━━━ CRON JOBS (for VPS — fully automated) ━━━
 # Add with: crontab -e
-# 55 8 * * 1-5 /home/draxxy/Projects/Random/dayhigh-daylow/daily_start.sh >> /home/draxxy/Projects/Random/dayhigh-daylow/logs/startup.log 2>&1
+#
+# Daily startup at 8:55 AM (Mon-Fri):
+# 55 8 * * 1-5 cd /home/draxxy/Projects/Random/dayhigh-daylow && /bin/bash daily_start.sh >> logs/startup.log 2>&1
+#
+# Watchdog every 5 min during market hours:
+# */5 9-15 * * 1-5 cd /home/draxxy/Projects/Random/dayhigh-daylow && .venv/bin/python watchdog.py >> logs/watchdog.log 2>&1
