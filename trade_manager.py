@@ -167,8 +167,9 @@ class TradeManager:
         return start_time <= now <= end_time
     
     def can_take_new_trade(self) -> bool:
-        """Check if new trade can be taken"""
-        return (self.current_position is None and 
+        """Check if new trade can be taken — must be in trading hours"""
+        return (self.is_trading_hours() and
+                self.current_position is None and 
                 self.trades_today < config.MAX_TRADES_PER_DAY)
     
     def enter_trade(self, option_type: str, spot_price: float):
