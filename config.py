@@ -46,6 +46,7 @@ TRAILING_SL_STEPS = [
     (55, 42),    # +55% → Lock +42%
     (65, 'EXIT') # +65% → Hard exit
 ]
+TSL_COOLDOWN_SECONDS = int(os.getenv('TSL_COOLDOWN_SECONDS', 60))  # Wait 60s after entry before TSL activates
 
 # ══════════════════════════════════════════════════════════════════════
 # LOT SIZE CONFIGURATION — SINGLE SOURCE OF TRUTH

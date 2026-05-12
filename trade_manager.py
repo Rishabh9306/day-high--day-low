@@ -34,6 +34,7 @@ class TradeManager:
         # Trailing Stop Loss state (per-trade — resets on exit)
         self.trailing_sl_active = False
         self.highest_price_seen = 0.0   # Persisted: prevents TSL regression after restart
+        self.entry_time = None          # When trade was entered — used for TSL cooldown
         
         # Flags
         self.high_breakout_triggered = False
@@ -82,6 +83,7 @@ class TradeManager:
                         # TSL state — critical for restart persistence
                         self.trailing_sl_active = state.get('trailing_sl_active', False)
                         self.highest_price_seen = state.get('highest_price_seen', 0.0)
+                        self.entry_time = state.get('entry_time')
                         # Circuit breaker — persists rejection count across restarts
                         self.consecutive_rejections = state.get('consecutive_rejections', 0)
                         print("Loaded existing trade state")
@@ -108,6 +110,7 @@ class TradeManager:
                 # TSL state — must persist for restart safety
                 'trailing_sl_active': self.trailing_sl_active,
                 'highest_price_seen': self.highest_price_seen,
+                'entry_time': self.entry_time,
                 # Circuit breaker — survives crashes
                 'consecutive_rejections': self.consecutive_rejections,
             }
@@ -241,6 +244,7 @@ class TradeManager:
             # Initialize per-trade TSL state
             self.trailing_sl_active = False
             self.highest_price_seen = actual_fill_price
+            self.entry_time = time.time()  # TSL cooldown starts now
             
             print(f"\n✅ ORDER FILLED SUCCESSFULLY")
             print(f"Quote Price: ₹{option_price}")
@@ -381,6 +385,11 @@ class TradeManager:
             return None
         
         if not self.entry_price or self.entry_price <= 0:
+            return None
+        
+        # TSL cooldown — skip trailing SL for first 60s after entry
+        # Prevents gamma traps on 0DTE options where prices spike +15% in seconds
+        if self.entry_time and (time.time() - self.entry_time) < config.TSL_COOLDOWN_SECONDS:
             return None
         
         # Track the highest option price seen during this trade (persisted)
