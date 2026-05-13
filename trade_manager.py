@@ -68,25 +68,32 @@ class TradeManager:
                     today = datetime.now(self.ist).strftime('%Y-%m-%d')
                     
                     if state_date == today:
+                        # Always restore prev day levels
                         self.prev_high = state.get('prev_high')
                         self.prev_low = state.get('prev_low')
-                        self.current_position = state.get('current_position')
-                        self.entry_price = state.get('entry_price')
-                        self.stop_loss = state.get('stop_loss')
-                        self.target = state.get('target')
-                        self.order_id = state.get('order_id')
-                        self.strike = state.get('strike')
-                        self.quantity = state.get('quantity')
-                        self.trades_today = state.get('trades_today', 0)
-                        self.high_breakout_triggered = state.get('high_breakout_triggered', False)
-                        self.low_breakout_triggered = state.get('low_breakout_triggered', False)
-                        # TSL state — critical for restart persistence
-                        self.trailing_sl_active = state.get('trailing_sl_active', False)
-                        self.highest_price_seen = state.get('highest_price_seen', 0.0)
-                        self.entry_time = state.get('entry_time')
-                        # Circuit breaker — persists rejection count across restarts
-                        self.consecutive_rejections = state.get('consecutive_rejections', 0)
-                        print("Loaded existing trade state")
+                        
+                        # Only restore trade state if there's an ACTIVE position
+                        # This prevents stale flags from old bot running past midnight
+                        if state.get('current_position'):
+                            self.current_position = state.get('current_position')
+                            self.entry_price = state.get('entry_price')
+                            self.stop_loss = state.get('stop_loss')
+                            self.target = state.get('target')
+                            self.order_id = state.get('order_id')
+                            self.strike = state.get('strike')
+                            self.quantity = state.get('quantity')
+                            self.trades_today = state.get('trades_today', 0)
+                            self.high_breakout_triggered = state.get('high_breakout_triggered', False)
+                            self.low_breakout_triggered = state.get('low_breakout_triggered', False)
+                            # TSL state — critical for crash recovery mid-trade
+                            self.trailing_sl_active = state.get('trailing_sl_active', False)
+                            self.highest_price_seen = state.get('highest_price_seen', 0.0)
+                            self.entry_time = state.get('entry_time')
+                            self.consecutive_rejections = state.get('consecutive_rejections', 0)
+                            print("Loaded active trade state")
+                        else:
+                            # No active position — start fresh (ignore stale flags)
+                            print("State found but no active position — starting fresh")
         except Exception as e:
             print(f"Error loading state: {e}")
     
