@@ -74,7 +74,7 @@ fi
 # don't kill it — just exit. Prevents cron from restarting
 # a healthy bot mid-trade.
 # ══════════════════════════════════════════════════════════════
-BOT_PID=$(pgrep -f "python.*$BOT_DIR/main.py" 2>/dev/null)
+BOT_PID=$(pgrep -f "main\.py" 2>/dev/null | head -1)
 if [ -n "$BOT_PID" ]; then
     # Bot process exists — check if its token is still valid
     TOKEN_CHECK=$($PYTHON -c "
@@ -95,8 +95,8 @@ except:
         exit 0
     else
         echo "⚠️  Bot is running (PID: $BOT_PID) but token is EXPIRED."
-        echo "   Killing it to refresh token..."
-        kill -9 $BOT_PID 2>/dev/null
+        echo "   Killing ALL bot processes to refresh token..."
+        pkill -9 -f "main\.py" 2>/dev/null
         sleep 1
         rm -f "$BOT_DIR/.bot.pid" "$BOT_DIR/.heartbeat"
         echo "   ✅ Bot stopped"
